@@ -31,6 +31,7 @@ class ETFHolding:
     stock_ticker: str
     date: str
     weight: float
+    amount: float = 0.0  # 평가금액 추가
     stock_name: str = ""  # Join을 통해 채워질 필드
 
     def to_dict(self):
@@ -40,4 +41,5 @@ class ETFHolding:
             "stock_name": self.stock_name,
             "date": self.date,
             "weight": self.weight,
+            "amount": self.amount,
         }

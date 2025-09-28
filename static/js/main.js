@@ -19,6 +19,18 @@ document.addEventListener('DOMContentLoaded', () => {
     let holdingsData = [];
     let weightChart = null;
 
+    // --- 유틸리티 함수 ---
+    function formatAmount(amount) {
+        // 금액을 억원 단위로 변환하여 표시
+        const billion = amount / 100000000;
+        if (billion >= 1) {
+            return `${billion.toFixed(1)}억원`;
+        } else {
+            const million = amount / 10000000;
+            return `${million.toFixed(0)}백만원`;
+        }
+    }
+
     // --- 로딩 및 상태 관리 ---
     function showLoading(text = '처리 중입니다...') {
         loadingText.textContent = text;
@@ -54,7 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const dataToShow = count === 'all' ? holdingsData : holdingsData.slice(0, parseInt(count));
 
         if (dataToShow.length === 0) {
-            holdingsTableBody.innerHTML = '<tr><td colspan="6">구성 종목 정보가 없습니다.</td></tr>';
+            holdingsTableBody.innerHTML = '<tr><td colspan="7">구성 종목 정보가 없습니다.</td></tr>';
             return;
         }
 
@@ -72,6 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td class="text-right">${item.prev_weight.toFixed(2)}</td>
                 <td class="text-right">${item.current_weight.toFixed(2)}</td>
                 <td class="text-right ${changeClass}">${item.change > 0 ? '+' : ''}${item.change.toFixed(2)}</td>
+                <td class="text-right amount-cell">${formatAmount(item.current_amount)}</td>
                 <td class="${statusClass}">${item.status}</td>
             `;
             holdingsTableBody.appendChild(row);
@@ -83,7 +96,8 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('stock-name-chart').textContent = stockName;
         
         const labels = history.map(item => item.date);
-        const data = history.map(item => item.weight);
+        const weightData = history.map(item => item.weight);
+        const amountData = history.map(item => item.amount / 100000000); // 억원 단위
 
         if (weightChart) {
             weightChart.destroy();
@@ -93,24 +107,53 @@ document.addEventListener('DOMContentLoaded', () => {
             type: 'line',
             data: {
                 labels: labels,
-                datasets: [{
-                    label: '비중(%)',
-                    data: data,
-                    borderColor: 'rgba(0, 123, 255, 1)',
-                    backgroundColor: 'rgba(0, 123, 255, 0.1)',
-                    fill: true,
-                    tension: 0.1
-                }]
+                datasets: [
+                    {
+                        label: '비중(%)',
+                        data: weightData,
+                        borderColor: 'rgba(0, 123, 255, 1)',
+                        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        label: '평가금액(억원)',
+                        data: amountData,
+                        borderColor: 'rgba(40, 167, 69, 1)',
+                        backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        yAxisID: 'y2'
+                    }
+                ]
             },
             options: {
                 responsive: true,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
                 scales: {
                     x: {
                         title: { display: true, text: '날짜' }
                     },
-                    y: {
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
                         title: { display: true, text: '비중(%)' },
                         beginAtZero: true
+                    },
+                    y2: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: { display: true, text: '평가금액(억원)' },
+                        beginAtZero: true,
+                        grid: {
+                            drawOnChartArea: false
+                        }
                     }
                 }
             }

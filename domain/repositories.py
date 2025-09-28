@@ -96,11 +96,11 @@ class EtfRepository:
     def bulk_insert_holdings(self, holdings: List[ETFHolding]):
         conn = self.db_manager.get_connection()
         holding_data = [
-            (h.etf_ticker, h.stock_ticker, h.date, h.weight) for h in holdings
+            (h.etf_ticker, h.stock_ticker, h.date, h.weight, h.amount) for h in holdings
         ]
         with conn:
             conn.executemany(
-                "INSERT OR IGNORE INTO data_etf_holdings (etf_ticker, stock_ticker, date, weight) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO data_etf_holdings (etf_ticker, stock_ticker, date, weight, amount) VALUES (?, ?, ?, ?, ?)",
                 holding_data,
             )
 
@@ -117,13 +117,25 @@ class EtfRepository:
         with conn:
             cursor = conn.cursor()
             query = """
-                SELECT h.etf_ticker, h.stock_ticker, h.date, h.weight, s.name as stock_name
+                SELECT h.etf_ticker, h.stock_ticker, h.date, h.weight, h.amount, s.name as stock_name
                 FROM data_etf_holdings h
                 JOIN data_stocks s ON h.stock_ticker = s.ticker
                 WHERE h.etf_ticker = ? AND h.date = ?
             """
             cursor.execute(query, (etf_ticker, date))
-            return [ETFHolding(**row) for row in cursor.fetchall()]
+            results = []
+            for row in cursor.fetchall():
+                results.append(
+                    ETFHolding(
+                        etf_ticker=row["etf_ticker"],
+                        stock_ticker=row["stock_ticker"],
+                        date=row["date"],
+                        weight=row["weight"],
+                        amount=row["amount"],
+                        stock_name=row["stock_name"],
+                    )
+                )
+            return results
 
     def get_available_dates_for_etf(self, etf_ticker: str) -> List[str]:
         conn = self.db_manager.get_connection()
@@ -142,13 +154,13 @@ class EtfRepository:
         with conn:
             cursor = conn.cursor()
             query = """
-                SELECT date, weight
+                SELECT date, weight, amount
                 FROM data_etf_holdings
                 WHERE etf_ticker = ? AND stock_ticker = ?
                 ORDER BY date ASC
             """
             cursor.execute(query, (etf_ticker, stock_ticker))
             return [
-                {"date": row["date"], "weight": row["weight"]}
+                {"date": row["date"], "weight": row["weight"], "amount": row["amount"]}
                 for row in cursor.fetchall()
             ]

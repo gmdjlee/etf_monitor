@@ -10,7 +10,7 @@ from pykrx import stock
 from domain.models import ETF, ETFHolding, Stock
 from domain.repositories import ConfigRepository, EtfRepository, StockRepository
 
-DEFAULT_COLLECT_DAYS = 10  # 초기 수집 시 6개월치 데이터 수집
+DEFAULT_COLLECT_DAYS = 5  # 초기 수집 시 10일치 데이터 수집
 
 
 class EtfDataService:
@@ -84,12 +84,10 @@ class EtfDataService:
         1. DB가 비어있는지 확인합니다.
         2. 기본 설정(테마, 제외어)을 DB에 추가합니다.
         3. 전체 주식 목록을 수집하여 DB에 저장합니다.
-        4. 6개월치 ETF 데이터를 수집하고 필터링하여 DB에 저장합니다.
+        4. 10일치 ETF 데이터를 수집하고 필터링하여 DB에 저장합니다.
         """
         if not self.etf_repo.db_manager.is_db_empty():
-            logging.info(
-                "데이터베이스가 이미 존재하여 초기 설정을 건너<binary data, 2 bytes><binary data, 2 bytes>니다."
-            )
+            logging.info("데이터베이스가 이미 존재하여 초기 설정을 건너뜁니다.")
             return False
 
         logging.info("초기 설정을 시작합니다...")
@@ -114,7 +112,7 @@ class EtfDataService:
         self.stock_repo.bulk_insert_stocks(all_stocks)
         logging.info(f"{len(all_stocks)}개의 주식 정보 저장 완료.")
 
-        # 3. 6개월치 데이터 수집
+        # 3. 10일치 데이터 수집
         end_date = datetime.now()
         start_date = end_date - timedelta(days=DEFAULT_COLLECT_DAYS)
         logging.info(
@@ -135,9 +133,7 @@ class EtfDataService:
                 except Exception as e:
                     logging.warning(f"{date_str} 데이터 처리 중 오류 발생: {e}")
             else:
-                logging.info(
-                    f"{date_str}은 주식 시장 개장일이 아니므로 건너<binary data, 2 bytes><binary data, 2 bytes>니다."
-                )
+                logging.info(f"{date_str}은 주식 시장 개장일이 아니므로 건너뜁니다.")
 
             current_date += timedelta(days=1)
 
@@ -162,6 +158,11 @@ class EtfDataService:
 
                 holdings = []
                 for _, row in holdings_df.iterrows():
+                    # 평가금액 컬럼 처리
+                    amount = 0.0
+                    if "금액" in holdings_df.columns:
+                        amount = float(row["금액"]) if pd.notna(row["금액"]) else 0.0
+
                     holdings.append(
                         ETFHolding(
                             etf_ticker=etf.ticker,
@@ -170,6 +171,7 @@ class EtfDataService:
                                 "%Y-%m-%d"
                             ),
                             weight=row["비중"],
+                            amount=amount,
                         )
                     )
                 if holdings:
@@ -233,7 +235,7 @@ class EtfDataService:
                     logging.warning(f"{date_str} 데이터 업데이트 중 오류 발생: {e}")
             else:
                 logging.info(
-                    f"{date_str}은 주식 시장 개장일이 아니므로 업데이트를 건너<binary data, 2 bytes><binary data, 2 bytes>니다."
+                    f"{date_str}은 주식 시장 개장일이 아니므로 업데이트를 건너뜁니다."
                 )
 
             current_date += timedelta(days=1)
@@ -265,6 +267,7 @@ class EtfDataService:
                         "prev_weight": 0,
                         "current_weight": h.weight,
                         "change": h.weight,
+                        "current_amount": h.amount,
                         "status": "신규",
                     }
                 )
@@ -301,6 +304,7 @@ class EtfDataService:
                 "stock_name": current.stock_name if current else prev.stock_name,
                 "prev_weight": prev.weight if prev else 0,
                 "current_weight": current.weight if current else 0,
+                "current_amount": current.amount if current else 0,
             }
 
             if current and not prev:
@@ -336,6 +340,10 @@ class EtfDataService:
     def export_to_csv(self, ticker: str, data: Dict) -> str:
         """비교 데이터를 CSV 파일로 변환하여 저장하고 파일 경로를 반환합니다."""
         df = pd.DataFrame(data["comparison"])
+
+        # 금액을 억원 단위로 변환하여 표시
+        df["amount_billion"] = df["current_amount"] / 100000000
+
         df = df.rename(
             columns={
                 "stock_name": "종목명",
@@ -343,9 +351,23 @@ class EtfDataService:
                 "prev_weight": f"이전 비중({data['prev_date']})",
                 "current_weight": f"현재 비중({data['current_date']})",
                 "change": "변동률",
+                "amount_billion": "금액(억원)",
                 "status": "상태",
             }
         )
+
+        # 필요한 컬럼만 선택하여 저장
+        df = df[
+            [
+                "종목명",
+                "종목코드",
+                f"이전 비중({data['prev_date']})",
+                f"현재 비중({data['current_date']})",
+                "변동률",
+                "평가금액(억원)",
+                "상태",
+            ]
+        ]
 
         # 임시 파일로 저장
         temp_dir = "temp_exports"

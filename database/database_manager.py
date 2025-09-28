@@ -73,11 +73,23 @@ class DatabaseManager:
                         stock_ticker TEXT NOT NULL,
                         date TEXT NOT NULL,
                         weight REAL NOT NULL,
+                        amount REAL DEFAULT 0,
                         FOREIGN KEY (etf_ticker) REFERENCES data_etfs (ticker),
                         FOREIGN KEY (stock_ticker) REFERENCES data_stocks (ticker),
                         UNIQUE (etf_ticker, stock_ticker, date)
                     )
                 """)
+
+                # 기존 테이블에 amount 컬럼이 없다면 추가
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(data_etf_holdings)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if "amount" not in columns:
+                    logging.info("기존 테이블에 amount 컬럼 추가 중...")
+                    conn.execute(
+                        "ALTER TABLE data_etf_holdings ADD COLUMN amount REAL DEFAULT 0"
+                    )
+
                 # 인덱스 추가로 성능 확보
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_holdings_etf_date ON data_etf_holdings (etf_ticker, date)"
