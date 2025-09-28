@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>설정 - ETF 모니터링</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>설정</h1>
+            <div class="header-controls">
+                 <a href="/" class="btn">메인으로 돌아가기</a>
+            </div>
+        </header>
+        
+        <main class="settings-grid">
+            <section class="config-panel">
+                <h2>테마 키워드 관리</h2>
+                <div class="input-group">
+                    <input type="text" id="new-theme" placeholder="추가할 테마 키워드">
+                    <button id="add-theme-btn" class="btn">추가</button>
+                </div>
+                <ul id="theme-list" class="config-list">
+                    <!-- 테마 목록이 동적으로 채워집니다. -->
+                </ul>
+            </section>
+            
+            <section class="config-panel">
+                <h2>제외 키워드 관리</h2>
+                <div class="input-group">
+                    <input type="text" id="new-exclusion" placeholder="추가할 제외 키워드">
+                    <button id="add-exclusion-btn" class="btn">추가</button>
+                </div>
+                <ul id="exclusion-list" class="config-list">
+                     <!-- 제외 키워드 목록이 동적으로 채워집니다. -->
+                </ul>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const themeList = document.getElementById('theme-list');
+            const exclusionList = document.getElementById('exclusion-list');
+
+            // 테마 로드
+            function loadThemes() {
+                fetch('/api/config/themes')
+                    .then(res => res.json())
+                    .then(data => {
+                        themeList.innerHTML = '';
+                        data.forEach(theme => {
+                            const li = document.createElement('li');
+                            li.innerHTML = `<span>${theme.name}</span> <button class="delete-btn" data-id="${theme.id}">삭제</button>`;
+                            themeList.appendChild(li);
+                        });
+                    });
+            }
+
+            // 제외 키워드 로드
+            function loadExclusions() {
+                fetch('/api/config/exclusions')
+                    .then(res => res.json())
+                    .then(data => {
+                        exclusionList.innerHTML = '';
+                        data.forEach(ex => {
+                            const li = document.createElement('li');
+                            li.innerHTML = `<span>${ex.keyword}</span> <button class="delete-btn" data-id="${ex.id}">삭제</button>`;
+                            exclusionList.appendChild(li);
+                        });
+                    });
+            }
+
+            // 테마 추가
+            document.getElementById('add-theme-btn').addEventListener('click', () => {
+                const newThemeInput = document.getElementById('new-theme');
+                const name = newThemeInput.value.trim();
+                if (!name) return;
+
+                fetch('/api/config/themes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                }).then(res => res.json()).then(() => {
+                    newThemeInput.value = '';
+                    loadThemes();
+                });
+            });
+
+            // 제외 키워드 추가
+            document.getElementById('add-exclusion-btn').addEventListener('click', () => {
+                const newExclusionInput = document.getElementById('new-exclusion');
+                const keyword = newExclusionInput.value.trim();
+                if (!keyword) return;
+
+                fetch('/api/config/exclusions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keyword })
+                }).then(res => res.json()).then(() => {
+                    newExclusionInput.value = '';
+                    loadExclusions();
+                });
+            });
+
+            // 삭제 이벤트 리스너 (이벤트 위임)
+            document.body.addEventListener('click', (e) => {
+                if (e.target.classList.contains('delete-btn')) {
+                    const id = e.target.dataset.id;
+                    const parentList = e.target.closest('ul');
+                    let url;
+                    let callback;
+
+                    if (parentList.id === 'theme-list') {
+                        url = `/api/config/themes/${id}`;
+                        callback = loadThemes;
+                    } else if (parentList.id === 'exclusion-list') {
+                        url = `/api/config/exclusions/${id}`;
+                        callback = loadExclusions;
+                    }
+
+                    if (url && confirm('정말로 삭제하시겠습니까?')) {
+                        fetch(url, { method: 'DELETE' })
+                            .then(res => res.json())
+                            .then(() => callback());
+                    }
+                }
+            });
+
+            // 초기 로드
+            loadThemes();
+            loadExclusions();
+        });
+    </script>
+</body>
+</html>
