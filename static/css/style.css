@@ -166,33 +166,42 @@ header h1 {
     border: 1px solid var(--border-color);
 }
 
+.details-controls label {
+    font-weight: 500;
+    font-size: 14px;
+}
+
 .table-container {
     overflow-x: auto;
 }
 
-#holdings-table {
+#holdings-table, #stats-table {
     width: 100%;
     border-collapse: collapse;
     margin-bottom: 30px;
 }
 
-#holdings-table th, #holdings-table td {
+#holdings-table th, #holdings-table td,
+#stats-table th, #stats-table td {
     padding: 12px 15px;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
 }
 
-#holdings-table thead th {
+#holdings-table thead th,
+#stats-table thead th {
     background-color: var(--bg-color);
     font-weight: 500;
 }
 
-#holdings-table tbody tr {
+#holdings-table tbody tr,
+#stats-table tbody tr {
     cursor: pointer;
     transition: background-color 0.2s;
 }
 
-#holdings-table tbody tr:hover {
+#holdings-table tbody tr:hover,
+#stats-table tbody tr:hover {
     background-color: var(--hover-color);
 }
 
@@ -201,6 +210,11 @@ header h1 {
 #holdings-table td:nth-child(4),
 #holdings-table td:nth-child(5),
 #holdings-table td:nth-child(6) {
+    text-align: right;
+}
+
+#stats-table td:nth-child(1),
+#stats-table td.text-right {
     text-align: right;
 }
 

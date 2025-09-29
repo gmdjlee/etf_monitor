@@ -164,3 +164,162 @@ class EtfRepository:
                 {"date": row["date"], "weight": row["weight"], "amount": row["amount"]}
                 for row in cursor.fetchall()
             ]
+
+    def get_duplicate_stock_statistics(self) -> Dict:
+        """전체 ETF에서 중복 종목 통계를 반환합니다."""
+        conn = self.db_manager.get_connection()
+        with conn:
+            cursor = conn.cursor()
+
+            # 최신 날짜 조회
+            cursor.execute("SELECT MAX(date) FROM data_etf_holdings")
+            latest_date = cursor.fetchone()[0]
+
+            if not latest_date:
+                return {"date": None, "stocks": []}
+
+            # 중복 종목 통계 조회
+            query = """
+                SELECT 
+                    s.ticker,
+                    s.name,
+                    COUNT(DISTINCT h.etf_ticker) as etf_count,
+                    GROUP_CONCAT(DISTINCT e.name) as etf_names,
+                    SUM(h.amount) as total_amount,
+                    AVG(h.weight) as avg_weight
+                FROM data_etf_holdings h
+                JOIN data_stocks s ON h.stock_ticker = s.ticker
+                JOIN data_etfs e ON h.etf_ticker = e.ticker
+                WHERE h.date = ?
+                GROUP BY s.ticker, s.name
+                HAVING etf_count > 1
+                ORDER BY etf_count DESC, total_amount DESC
+                LIMIT 100
+            """
+            cursor.execute(query, (latest_date,))
+
+            stocks = []
+            for row in cursor.fetchall():
+                stocks.append(
+                    {
+                        "ticker": row["ticker"],
+                        "name": row["name"],
+                        "etf_count": row["etf_count"],
+                        "etf_names": row["etf_names"].split(",")
+                        if row["etf_names"]
+                        else [],
+                        "total_amount": row["total_amount"],
+                        "avg_weight": round(row["avg_weight"], 2),
+                    }
+                )
+
+            return {"date": latest_date, "stocks": stocks}
+
+    def get_amount_ranking_statistics(self) -> Dict:
+        """전체 ETF에서 종목별 총 평가금액 통계를 반환합니다."""
+        conn = self.db_manager.get_connection()
+        with conn:
+            cursor = conn.cursor()
+
+            # 최신 날짜 조회
+            cursor.execute("SELECT MAX(date) FROM data_etf_holdings")
+            latest_date = cursor.fetchone()[0]
+
+            if not latest_date:
+                return {"date": None, "stocks": []}
+
+            # 평가금액 순위 조회
+            query = """
+                SELECT 
+                    s.ticker,
+                    s.name,
+                    SUM(h.amount) as total_amount,
+                    COUNT(DISTINCT h.etf_ticker) as etf_count,
+                    AVG(h.weight) as avg_weight,
+                    MAX(h.weight) as max_weight
+                FROM data_etf_holdings h
+                JOIN data_stocks s ON h.stock_ticker = s.ticker
+                WHERE h.date = ?
+                GROUP BY s.ticker, s.name
+                HAVING total_amount > 0
+                ORDER BY total_amount DESC
+                LIMIT 100
+            """
+            cursor.execute(query, (latest_date,))
+
+            stocks = []
+            for row in cursor.fetchall():
+                stocks.append(
+                    {
+                        "ticker": row["ticker"],
+                        "name": row["name"],
+                        "total_amount": row["total_amount"],
+                        "etf_count": row["etf_count"],
+                        "avg_weight": round(row["avg_weight"], 2),
+                        "max_weight": round(row["max_weight"], 2),
+                    }
+                )
+
+            return {"date": latest_date, "stocks": stocks}
+
+    def get_theme_duplicate_stock_statistics(self, theme: str) -> Dict:
+        """특정 테마 ETF들에서 중복 종목 통계를 반환합니다."""
+        conn = self.db_manager.get_connection()
+        with conn:
+            cursor = conn.cursor()
+
+            # 최신 날짜 조회
+            cursor.execute("SELECT MAX(date) FROM data_etf_holdings")
+            latest_date = cursor.fetchone()[0]
+
+            if not latest_date:
+                return {"date": None, "theme": theme, "stocks": []}
+
+            # 테마에 해당하는 ETF 목록 조회
+            cursor.execute(
+                "SELECT ticker, name FROM data_etfs WHERE name LIKE ?", (f"%{theme}%",)
+            )
+            theme_etfs = cursor.fetchall()
+
+            if not theme_etfs:
+                return {"date": latest_date, "theme": theme, "stocks": []}
+
+            etf_tickers = [etf["ticker"] for etf in theme_etfs]
+            placeholders = ",".join(["?" for _ in etf_tickers])
+
+            # 중복 종목 통계 조회
+            query = f"""
+                SELECT 
+                    s.ticker,
+                    s.name,
+                    COUNT(DISTINCT h.etf_ticker) as etf_count,
+                    GROUP_CONCAT(DISTINCT e.name) as etf_names,
+                    SUM(h.amount) as total_amount,
+                    AVG(h.weight) as avg_weight
+                FROM data_etf_holdings h
+                JOIN data_stocks s ON h.stock_ticker = s.ticker
+                JOIN data_etfs e ON h.etf_ticker = e.ticker
+                WHERE h.date = ? AND h.etf_ticker IN ({placeholders})
+                GROUP BY s.ticker, s.name
+                HAVING etf_count > 1
+                ORDER BY etf_count DESC, total_amount DESC
+                LIMIT 100
+            """
+            cursor.execute(query, [latest_date] + etf_tickers)
+
+            stocks = []
+            for row in cursor.fetchall():
+                stocks.append(
+                    {
+                        "ticker": row["ticker"],
+                        "name": row["name"],
+                        "etf_count": row["etf_count"],
+                        "etf_names": row["etf_names"].split(",")
+                        if row["etf_names"]
+                        else [],
+                        "total_amount": row["total_amount"],
+                        "avg_weight": round(row["avg_weight"], 2),
+                    }
+                )
+
+            return {"date": latest_date, "theme": theme, "stocks": stocks}

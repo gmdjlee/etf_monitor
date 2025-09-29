@@ -157,6 +157,58 @@ def export_csv(ticker):
         ), 500
 
 
+# --- 통계 API 라우트 ---
+
+
+@app.route("/api/stats/duplicate-stocks", methods=["GET"])
+def get_duplicate_stocks():
+    """
+    전체 ETF에서 중복 종목 순위를 반환합니다.
+    각 종목이 몇 개의 ETF에 포함되어 있는지 카운트합니다.
+    """
+    try:
+        stats = etf_service.get_duplicate_stock_stats()
+        return jsonify(stats)
+    except Exception as e:
+        logging.error(f"중복 종목 통계 조회 중 오류 발생: {e}", exc_info=True)
+        return jsonify(
+            {"status": "error", "message": "중복 종목 통계를 가져오는 데 실패했습니다."}
+        ), 500
+
+
+@app.route("/api/stats/amount-ranking", methods=["GET"])
+def get_amount_ranking():
+    """
+    전체 ETF에서 종목별 총 평가금액 순위를 반환합니다.
+    """
+    try:
+        stats = etf_service.get_amount_ranking_stats()
+        return jsonify(stats)
+    except Exception as e:
+        logging.error(f"금액 순위 통계 조회 중 오류 발생: {e}", exc_info=True)
+        return jsonify(
+            {"status": "error", "message": "금액 순위 통계를 가져오는 데 실패했습니다."}
+        ), 500
+
+
+@app.route("/api/stats/theme-stocks/<theme>", methods=["GET"])
+def get_theme_duplicate_stocks(theme):
+    """
+    특정 테마 ETF들에서 중복 종목 순위를 반환합니다.
+    """
+    try:
+        stats = etf_service.get_theme_duplicate_stock_stats(theme)
+        return jsonify(stats)
+    except Exception as e:
+        logging.error(f"테마별 중복 종목 통계 조회 중 오류 발생: {e}", exc_info=True)
+        return jsonify(
+            {
+                "status": "error",
+                "message": "테마별 중복 종목 통계를 가져오는 데 실패했습니다.",
+            }
+        ), 500
+
+
 # --- 설정 관리 API 라우트 ---
 
 

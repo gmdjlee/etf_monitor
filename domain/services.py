@@ -337,6 +337,18 @@ class EtfDataService:
             "comparison": sorted_comparison,
         }
 
+    def get_duplicate_stock_stats(self) -> Dict:
+        """전체 ETF에서 중복 종목 순위를 반환합니다."""
+        return self.etf_repo.get_duplicate_stock_statistics()
+
+    def get_amount_ranking_stats(self) -> Dict:
+        """전체 ETF에서 종목별 총 평가금액 순위를 반환합니다."""
+        return self.etf_repo.get_amount_ranking_statistics()
+
+    def get_theme_duplicate_stock_stats(self, theme: str) -> Dict:
+        """특정 테마 ETF들에서 중복 종목 순위를 반환합니다."""
+        return self.etf_repo.get_theme_duplicate_stock_statistics(theme)
+
     def export_to_csv(self, ticker: str, data: Dict) -> str:
         """비교 데이터를 CSV 파일로 변환하여 저장하고 파일 경로를 반환합니다."""
         df = pd.DataFrame(data["comparison"])
@@ -364,7 +376,7 @@ class EtfDataService:
                 f"이전 비중({data['prev_date']})",
                 f"현재 비중({data['current_date']})",
                 "변동률",
-                "평가금액(억원)",
+                "금액(억원)",
                 "상태",
             ]
         ]
