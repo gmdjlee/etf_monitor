@@ -1,6 +1,7 @@
 """
 PyKRX Adapter
 PyKRX 라이브러리를 사용한 시장 데이터 어댑터 구현체입니다.
+✅ 수정: 010010(원화예금) 특수 처리 추가
 """
 
 import time
@@ -23,6 +24,13 @@ from infrastructure.adapters.market_data_adapter import MarketDataAdapter
 class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
     """PyKRX 라이브러리를 사용한 시장 데이터 어댑터"""
 
+    # ✅ 추가: 특수 ticker 매핑
+    SPECIAL_TICKERS = {
+        "010010": "원화예금",
+        # 필요시 다른 특수 ticker 추가 가능
+        # "XXXXXX": "특수자산명",
+    }
+
     def __init__(self):
         self.api_delay = settings.API_DELAY_SECONDS
         self.retry_max = settings.RETRY_MAX_ATTEMPTS
@@ -34,7 +42,6 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
             self.logger.info("Collecting all stocks from all markets")
 
             all_stocks = []
-            # today = to_krx_format(datetime.now())
 
             for market in market_settings.MARKETS:
                 self.logger.debug("Collecting stocks from market: %s", market)
@@ -76,7 +83,6 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
             stocks = []
             for ticker in tickers:
                 try:
-                    # ✅ 수정: 안전하게 종목명 가져오기
                     name = self._safe_get_stock_name(ticker)
                     if name:
                         stocks.append(Stock.create(ticker=ticker, name=name))
@@ -103,7 +109,7 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
 
     def _safe_get_stock_name(self, ticker: str) -> Optional[str]:
         """
-        ✅ 추가: 안전하게 종목명을 가져옵니다.
+        ✅ 수정: 안전하게 종목명을 가져옵니다.
 
         Args:
             ticker: 종목 코드
@@ -111,6 +117,12 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
         Returns:
             종목명, 실패 시 None
         """
+        # ✅ 추가: 특수 ticker 처리 (최우선)
+        if ticker in self.SPECIAL_TICKERS:
+            special_name = self.SPECIAL_TICKERS[ticker]
+            self.logger.debug(f"Special ticker detected: {ticker} -> {special_name}")
+            return special_name
+
         try:
             name = stock.get_market_ticker_name(ticker)
             if name and isinstance(name, str) and name.strip():
@@ -143,7 +155,6 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
             etfs = []
             for ticker in tickers:
                 try:
-                    # ✅ 수정: 안전하게 ETF명 가져오기
                     name = self._safe_get_etf_name(ticker)
                     if name:
                         etfs.append(ETF.create(ticker=ticker, name=name))
@@ -165,7 +176,7 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
 
     def _safe_get_etf_name(self, ticker: str) -> Optional[str]:
         """
-        ✅ 추가: 안전하게 ETF명을 가져옵니다.
+        ✅ 수정: 안전하게 ETF명을 가져옵니다.
 
         Args:
             ticker: ETF 코드
@@ -173,6 +184,11 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
         Returns:
             ETF명, 실패 시 None
         """
+        # ✅ 추가: 특수 ticker는 ETF가 아니므로 None 반환
+        if ticker in self.SPECIAL_TICKERS:
+            self.logger.debug(f"Special ticker {ticker} is not an ETF")
+            return None
+
         try:
             name = stock.get_etf_ticker_name(ticker)
             if name and isinstance(name, str) and name.strip():
@@ -224,7 +240,7 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
                     if "금액" in df.columns:
                         amount = float(row["금액"]) if pd.notna(row["금액"]) else 0.0
 
-                    # ✅ 수정: 종목명 안전하게 가져오기
+                    # ✅ 수정: 종목명 안전하게 가져오기 (특수 ticker 처리 포함)
                     stock_name = self._get_holding_stock_name(
                         df, row, str(stock_ticker)
                     )
@@ -268,13 +284,20 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
         self, df: pd.DataFrame, row: pd.Series, stock_ticker: str
     ) -> str:
         """
-        ✅ 추가: Holdings의 종목명을 안전하게 가져옵니다.
+        ✅ 수정: Holdings의 종목명을 안전하게 가져옵니다.
 
         우선순위:
-        1. DataFrame의 '종목명' 컬럼
-        2. PyKRX API로 조회
-        3. 티커를 이름으로 사용
+        1. 특수 ticker 처리 (010010 등)
+        2. DataFrame의 '종목명' 컬럼
+        3. PyKRX API로 조회
+        4. 티커를 이름으로 사용
         """
+        # ✅ 추가: 특수 ticker 처리 (최우선)
+        if stock_ticker in self.SPECIAL_TICKERS:
+            special_name = self.SPECIAL_TICKERS[stock_ticker]
+            self.logger.debug(f"Using special name for {stock_ticker}: {special_name}")
+            return special_name
+
         # 1. DataFrame에서 시도
         if "종목명" in df.columns and pd.notna(row["종목명"]):
             name = str(row["종목명"]).strip()
@@ -315,8 +338,9 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
             return False
 
     def get_stock_name(self, ticker: str) -> str:
-        """종목 코드로 종목명을 조회합니다."""
-        # ✅ 수정: 안전한 메서드 사용
+        """
+        ✅ 수정: 종목 코드로 종목명을 조회합니다.
+        """
         name = self._safe_get_stock_name(ticker)
         if name:
             return name
@@ -325,8 +349,9 @@ class PyKRXAdapter(MarketDataAdapter, LoggerMixin):
         raise ExternalAPIException("PyKRX", f"Could not get stock name for {ticker}")
 
     def get_etf_name(self, ticker: str) -> str:
-        """ETF 코드로 ETF명을 조회합니다."""
-        # ✅ 수정: 안전한 메서드 사용
+        """
+        ✅ 수정: ETF 코드로 ETF명을 조회합니다.
+        """
         name = self._safe_get_etf_name(ticker)
         if name:
             return name
