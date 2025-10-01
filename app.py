@@ -1,300 +1,150 @@
-import logging
-import os
-from datetime import datetime
+"""
+ETF Monitoring Application
+애플리케이션 진입점입니다.
+"""
 
-from database.database_manager import DatabaseManager
-from domain.repositories import ConfigRepository, EtfRepository, StockRepository
-from domain.services import EtfDataService
-from flask import Flask, jsonify, render_template, request, send_file
-
-# 로깅 설정
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+from application.queries.holdings_comparison_query import HoldingsComparisonQuery
+from application.queries.stock_statistics_query import StockStatisticsQuery
+from application.queries.weight_history_query import WeightHistoryQuery
+from application.use_cases.export_data import ExportDataUseCase
+from application.use_cases.get_holdings_comparison import GetHoldingsComparisonUseCase
+from application.use_cases.get_statistics import GetStatisticsUseCase
+from application.use_cases.initialize_system import InitializeSystemUseCase
+from application.use_cases.update_etf_data import UpdateETFDataUseCase
+from config.logging_config import initialize_logging
+from config.settings import settings
+from domain.services.etf_filter_service import ETFFilterService
+from domain.services.holdings_analyzer import HoldingsAnalyzer
+from domain.services.statistics_calculator import StatisticsCalculator
+from flask import Flask, render_template
+from infrastructure.adapters.pykrx_adapter import PyKRXAdapter
+from infrastructure.database.connection import db_connection
+from infrastructure.database.migrations import DatabaseMigrations
+from infrastructure.database.repositories.sqlite_config_repository import (
+    SQLiteConfigRepository,
 )
-
-# 애플리케이션 설정
-app = Flask(__name__)
-app.config["JSON_AS_ASCII"] = False
-
-# 데이터베이스 파일 경로 설정
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "database", "etf_monitor.db")
-
-# 서비스 및 리포지토리 초기화 (의존성 주입)
-db_manager = DatabaseManager(DB_PATH)
-etf_repo = EtfRepository(db_manager)
-stock_repo = StockRepository(db_manager)
-config_repo = ConfigRepository(db_manager)
-etf_service = EtfDataService(etf_repo, stock_repo, config_repo)
-
-# --- HTML 렌더링 라우트 ---
+from infrastructure.database.repositories.sqlite_etf_repository import (
+    SQLiteETFRepository,
+)
+from infrastructure.database.repositories.sqlite_stock_repository import (
+    SQLiteStockRepository,
+)
+from presentation.api.controllers.config_controller import ConfigController
+from presentation.api.controllers.etf_controller import ETFController
+from presentation.api.controllers.statistics_controller import StatisticsController
+from presentation.api.controllers.system_controller import SystemController
+from presentation.api.routes import register_all_routes
 
 
-@app.route("/")
-def index():
-    """메인 페이지를 렌더링합니다."""
-    return render_template("index.html")
+def create_app():
+    """Flask 애플리케이션을 생성하고 설정합니다."""
+    # 로깅 초기화
+    initialize_logging()
+
+    # Flask 앱 생성
+    app = Flask(__name__)
+    app.config["JSON_AS_ASCII"] = settings.JSON_AS_ASCII
+
+    # 데이터베이스 초기화
+    migrations = DatabaseMigrations(db_connection)
+    migrations.run_all_migrations()
+
+    # 의존성 주입 - Infrastructure Layer
+    stock_repo = SQLiteStockRepository(db_connection)
+    etf_repo = SQLiteETFRepository(db_connection)
+    config_repo = SQLiteConfigRepository(db_connection)
+    market_adapter = PyKRXAdapter()
+
+    # 의존성 주입 - Domain Layer
+    filter_service = ETFFilterService()
+    holdings_analyzer = HoldingsAnalyzer()
+    statistics_calculator = StatisticsCalculator()
+
+    # 의존성 주입 - Application Layer (Queries)
+    holdings_comparison_query = HoldingsComparisonQuery(
+        etf_repo, stock_repo, holdings_analyzer
+    )
+    stock_statistics_query = StockStatisticsQuery(etf_repo, statistics_calculator)
+    weight_history_query = WeightHistoryQuery(etf_repo)
+
+    # 의존성 주입 - Application Layer (Use Cases)
+    initialize_system_uc = InitializeSystemUseCase(
+        etf_repo, stock_repo, config_repo, market_adapter, filter_service
+    )
+    update_etf_data_uc = UpdateETFDataUseCase(
+        etf_repo, config_repo, market_adapter, filter_service
+    )
+    get_holdings_comparison_uc = GetHoldingsComparisonUseCase(
+        etf_repo, stock_repo, holdings_analyzer
+    )
+    # ✅ 수정: Query를 주입
+    get_statistics_uc = GetStatisticsUseCase(
+        etf_repo,
+        statistics_calculator,
+        stock_statistics_query,  # 추가
+    )
+    export_data_uc = ExportDataUseCase(etf_repo, holdings_comparison_query)
+
+    # 의존성 주입 - Presentation Layer (Controllers)
+    etf_controller = ETFController(
+        etf_repo, get_holdings_comparison_uc, export_data_uc, weight_history_query
+    )
+    statistics_controller = StatisticsController(get_statistics_uc)
+    system_controller = SystemController(initialize_system_uc, update_etf_data_uc)
+    config_controller = ConfigController(config_repo)
+
+    # 컨트롤러를 Blueprint에 주입 (라우트에서 사용)
+
+    # API 라우트 등록 전에 컨트롤러 설정
+    def setup_controllers(api_bp):
+        api_bp.etf_controller = etf_controller
+        api_bp.statistics_controller = statistics_controller
+        api_bp.system_controller = system_controller
+        api_bp.config_controller = config_controller
+
+    # 라우트 등록
+    register_all_routes(app)
+
+    # Blueprint에 컨트롤러 주입
+    for blueprint in app.blueprints.values():
+        if blueprint.name == "api":
+            setup_controllers(blueprint)
+
+    # HTML 라우트
+    @app.route("/")
+    def index():
+        """메인 페이지"""
+        return render_template("index.html")
+
+    @app.route("/settings")
+    def settings_page():
+        """설정 페이지"""
+        return render_template("settings.html")
+
+    # 에러 핸들러
+    @app.errorhandler(404)
+    def not_found(error):
+        return {"status": "error", "message": "Not Found"}, 404
+
+    @app.errorhandler(500)
+    def internal_error(error):
+        return {"status": "error", "message": "Internal Server Error"}, 500
+
+    return app
 
 
-@app.route("/settings")
-def settings():
-    """설정 페이지를 렌더링합니다."""
-    return render_template("settings.html")
+def main():
+    """애플리케이션을 실행합니다."""
+    app = create_app()
 
+    print(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    print(f"Database: {settings.DATABASE_PATH}")
+    print(f"Running on http://{settings.FLASK_HOST}:{settings.FLASK_PORT}")
 
-# --- API 라우트 ---
-
-
-@app.route("/api/initialize", methods=["POST"])
-def initialize_data():
-    """
-    애플리케이션 초기화 함수. DB가 비어있을 경우 6개월치 데이터를 수집합니다.
-    """
-    try:
-        is_initial_setup_done = etf_service.run_initial_setup()
-        if is_initial_setup_done:
-            return jsonify(
-                {
-                    "status": "success",
-                    "message": "초기 데이터 수집 및 설정이 완료되었습니다.",
-                }
-            )
-        else:
-            return jsonify(
-                {
-                    "status": "success",
-                    "message": "이미 데이터베이스가 존재합니다. 최신 데이터로 업데이트를 진행합니다.",
-                }
-            )
-    except Exception as e:
-        logging.error(f"초기화 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": f"초기화 중 오류가 발생했습니다: {str(e)}"}
-        ), 500
-
-
-@app.route("/api/refresh", methods=["POST"])
-def refresh_data():
-    """최신 데이터를 가져와 데이터베이스를 업데이트합니다."""
-    try:
-        updated_count = etf_service.update_latest_data()
-        return jsonify(
-            {
-                "status": "success",
-                "message": f"{updated_count}개의 ETF에 대한 최신 정보가 업데이트되었습니다.",
-            }
-        )
-    except Exception as e:
-        logging.error(f"데이터 새로고침 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {
-                "status": "error",
-                "message": f"데이터 새로고침 중 오류가 발생했습니다: {str(e)}",
-            }
-        ), 500
-
-
-@app.route("/api/etfs", methods=["GET"])
-def get_etfs():
-    """필터링된 모든 액티브 ETF 목록을 반환합니다."""
-    try:
-        etfs = etf_repo.get_all_etfs()
-        return jsonify([etf.to_dict() for etf in etfs])
-    except Exception as e:
-        logging.error(f"ETF 목록 조회 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "ETF 목록을 가져오는 데 실패했습니다."}
-        ), 500
-
-
-@app.route("/api/etf/<ticker>", methods=["GET"])
-def get_etf_holdings_comparison(ticker):
-    """
-    특정 ETF의 구성 종목 정보를 '현재'와 '이전' 날짜를 기준으로 비교하여 반환합니다.
-    신규, 제외, 비중 변경 종목을 포함합니다.
-    """
-    try:
-        holdings_comparison = etf_service.get_holdings_comparison(ticker)
-        return jsonify(holdings_comparison)
-    except Exception as e:
-        logging.error(f"ETF 구성 종목 비교 정보 조회 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {
-                "status": "error",
-                "message": "ETF 구성 종목 정보를 가져오는 데 실패했습니다.",
-            }
-        ), 500
-
-
-@app.route("/api/etf/<etf_ticker>/stock/<stock_ticker>", methods=["GET"])
-def get_stock_weight_history(etf_ticker, stock_ticker):
-    """특정 ETF 내 특정 주식의 6개월간 비중 추이를 반환합니다."""
-    try:
-        history = etf_repo.get_stock_weight_history(etf_ticker, stock_ticker)
-        return jsonify(history)
-    except Exception as e:
-        logging.error(f"주식 비중 추이 조회 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "주식 비중 추이를 가져오는 데 실패했습니다."}
-        ), 500
-
-
-@app.route("/api/export/csv/<ticker>", methods=["GET"])
-def export_csv(ticker):
-    """선택된 ETF의 현재 구성 종목 정보를 CSV 파일로 내보냅니다."""
-    try:
-        comparison_data = etf_service.get_holdings_comparison(ticker)
-        file_path = etf_service.export_to_csv(ticker, comparison_data)
-        return send_file(
-            file_path,
-            as_attachment=True,
-            download_name=f"{ticker}_holdings_{datetime.now().strftime('%Y%m%d')}.csv",
-        )
-    except Exception as e:
-        logging.error(f"CSV 내보내기 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "CSV 파일 생성에 실패했습니다."}
-        ), 500
-
-
-# --- 통계 API 라우트 ---
-
-
-@app.route("/api/stats/duplicate-stocks", methods=["GET"])
-def get_duplicate_stocks():
-    """
-    전체 ETF에서 중복 종목 순위를 반환합니다.
-    각 종목이 몇 개의 ETF에 포함되어 있는지 카운트합니다.
-    """
-    try:
-        stats = etf_service.get_duplicate_stock_stats()
-        return jsonify(stats)
-    except Exception as e:
-        logging.error(f"중복 종목 통계 조회 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "중복 종목 통계를 가져오는 데 실패했습니다."}
-        ), 500
-
-
-@app.route("/api/stats/amount-ranking", methods=["GET"])
-def get_amount_ranking():
-    """
-    전체 ETF에서 종목별 총 평가금액 순위를 반환합니다.
-    """
-    try:
-        stats = etf_service.get_amount_ranking_stats()
-        return jsonify(stats)
-    except Exception as e:
-        logging.error(f"금액 순위 통계 조회 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "금액 순위 통계를 가져오는 데 실패했습니다."}
-        ), 500
-
-
-@app.route("/api/stats/theme-stocks/<theme>", methods=["GET"])
-def get_theme_duplicate_stocks(theme):
-    """
-    특정 테마 ETF들에서 중복 종목 순위를 반환합니다.
-    """
-    try:
-        stats = etf_service.get_theme_duplicate_stock_stats(theme)
-        return jsonify(stats)
-    except Exception as e:
-        logging.error(f"테마별 중복 종목 통계 조회 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {
-                "status": "error",
-                "message": "테마별 중복 종목 통계를 가져오는 데 실패했습니다.",
-            }
-        ), 500
-
-
-# --- 설정 관리 API 라우트 ---
-
-
-@app.route("/api/config/themes", methods=["GET", "POST"])
-def manage_themes():
-    """테마 목록을 조회하거나 새 테마를 추가합니다."""
-    try:
-        if request.method == "GET":
-            themes = config_repo.get_themes()
-            return jsonify(themes)
-        elif request.method == "POST":
-            data = request.json
-            if "name" not in data:
-                return jsonify(
-                    {"status": "error", "message": "테마 이름이 필요합니다."}
-                ), 400
-            config_repo.add_theme(data["name"])
-            return jsonify(
-                {
-                    "status": "success",
-                    "message": f"'{data['name']}' 테마가 추가되었습니다.",
-                }
-            )
-    except Exception as e:
-        logging.error(f"테마 관리 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "테마 관리 중 오류가 발생했습니다."}
-        ), 500
-
-
-@app.route("/api/config/themes/<int:theme_id>", methods=["DELETE"])
-def delete_theme(theme_id):
-    """특정 테마를 삭제합니다."""
-    try:
-        config_repo.delete_theme(theme_id)
-        return jsonify({"status": "success", "message": "테마가 삭제되었습니다."})
-    except Exception as e:
-        logging.error(f"테마 삭제 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "테마 삭제 중 오류가 발생했습니다."}
-        ), 500
-
-
-@app.route("/api/config/exclusions", methods=["GET", "POST"])
-def manage_exclusions():
-    """제외 키워드 목록을 조회하거나 새 키워드를 추가합니다."""
-    try:
-        if request.method == "GET":
-            exclusions = config_repo.get_exclusions()
-            return jsonify(exclusions)
-        elif request.method == "POST":
-            data = request.json
-            if "keyword" not in data:
-                return jsonify(
-                    {"status": "error", "message": "키워드가 필요합니다."}
-                ), 400
-            config_repo.add_exclusion(data["keyword"])
-            return jsonify(
-                {
-                    "status": "success",
-                    "message": f"'{data['keyword']}' 키워드가 추가되었습니다.",
-                }
-            )
-    except Exception as e:
-        logging.error(f"제외 키워드 관리 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "제외 키워드 관리 중 오류가 발생했습니다."}
-        ), 500
-
-
-@app.route("/api/config/exclusions/<int:exclusion_id>", methods=["DELETE"])
-def delete_exclusion(exclusion_id):
-    """특정 제외 키워드를 삭제합니다."""
-    try:
-        config_repo.delete_exclusion(exclusion_id)
-        return jsonify(
-            {"status": "success", "message": "제외 키워드가 삭제되었습니다."}
-        )
-    except Exception as e:
-        logging.error(f"제외 키워드 삭제 중 오류 발생: {e}", exc_info=True)
-        return jsonify(
-            {"status": "error", "message": "제외 키워드 삭제 중 오류가 발생했습니다."}
-        ), 500
+    app.run(
+        host=settings.FLASK_HOST, port=settings.FLASK_PORT, debug=settings.FLASK_DEBUG
+    )
 
 
 if __name__ == "__main__":
-    # 애플리케이션 시작 시 데이터베이스 테이블 생성 확인
-    db_manager.create_tables()
-    app.run(debug=True, port=5001)
+    main()

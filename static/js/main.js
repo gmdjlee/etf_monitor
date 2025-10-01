@@ -23,12 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentEtfData = null;
     let holdingsData = [];
     let weightChart = null;
-    let currentView = 'etf'; // 'etf' or 'stats'
+    let currentView = 'etf';
     let allThemes = [];
 
     // --- 유틸리티 함수 ---
     function formatAmount(amount) {
-        // 금액을 억원 단위로 변환하여 표시
         const billion = amount / 100000000;
         if (billion >= 1) {
             return `${billion.toFixed(1)}억원`;
@@ -247,7 +246,8 @@ document.addEventListener('DOMContentLoaded', () => {
     async function initializeApp() {
         showLoading('애플리케이션을 초기화하고 있습니다. 잠시만 기다려주세요...');
         try {
-            const response = await fetch('/api/initialize', { method: 'POST' });
+            // ⚠️ 변경: /api/initialize → /api/system/initialize
+            const response = await fetch('/api/system/initialize', { method: 'POST' });
             const result = await response.json();
             alert(result.message);
             await fetchEtfList();
@@ -275,14 +275,14 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/api/config/themes');
             if (!response.ok) throw new Error('Network response was not ok');
-            allThemes = await response.json();
+            const result = await response.json();
+            allThemes = result.themes || []; // ⚠️ 변경: 응답 구조 변경
             
-            // 테마 셀렉트 박스 채우기
             themeSelect.innerHTML = '<option value="">전체</option>';
             allThemes.forEach(theme => {
                 const option = document.createElement('option');
-                option.value = theme.name;
-                option.textContent = theme.name;
+                option.value = theme;
+                option.textContent = theme;
                 themeSelect.appendChild(option);
             });
         } catch (error) {
@@ -293,7 +293,8 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchEtfDetails(ticker) {
         showLoading('ETF 상세 정보를 불러오는 중입니다...');
         try {
-            const response = await fetch(`/api/etf/${ticker}`);
+            // ⚠️ 변경: /api/etf/{ticker} → /api/etf/{ticker}/comparison
+            const response = await fetch(`/api/etf/${ticker}/comparison`);
             if (!response.ok) throw new Error('Network response was not ok');
             
             currentEtfData = await response.json();
@@ -305,7 +306,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (weightChart) weightChart.destroy();
             
             const selectedEtf = allEtfs.find(e => e.ticker === ticker);
-            document.getElementById('etf-name').textContent = selectedEtf ? selectedEtf.name : 'Unknown ETF';
+            document.getElementById('etf-name').textContent = currentEtfData.etf_name || selectedEtf?.name || 'Unknown ETF';
             document.getElementById('etf-ticker').textContent = `TICKER: ${currentEtfData.etf_ticker}`;
             document.getElementById('etf-dates').textContent = `비교 기간: ${currentEtfData.prev_date} vs ${currentEtfData.current_date}`;
             
@@ -321,10 +322,10 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchStockHistory(etfTicker, stockTicker, stockName) {
         showLoading('종목 비중 추이를 불러오는 중입니다...');
         try {
-            const response = await fetch(`/api/etf/${etfTicker}/stock/${stockTicker}`);
+            const response = await fetch(`/api/etf/${etfTicker}/stock/${stockTicker}/history`);
             if (!response.ok) throw new Error('Network response was not ok');
-            const history = await response.json();
-            renderWeightChart(stockName, history);
+            const data = await response.json();
+            renderWeightChart(stockName, data.history); // ⚠️ 변경: 응답 구조
         } catch (error) {
             console.error('Error fetching stock history:', error);
             alert('종목 비중 추이를 가져오는 데 실패했습니다.');
@@ -342,7 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let url;
             if (statsType === 'duplicate') {
                 if (theme) {
-                    url = `/api/stats/theme-stocks/${encodeURIComponent(theme)}`;
+                    url = `/api/stats/theme/${encodeURIComponent(theme)}`;
                 } else {
                     url = '/api/stats/duplicate-stocks';
                 }
@@ -357,7 +358,16 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('stats-date').textContent = `기준일: ${data.date}`;
             
             updateStatsTableHeaders(statsType);
-            renderStatsTable(data.stocks, statsType);
+            
+            // ⚠️ 변경: 응답 구조에 따라 stocks 추출
+            let stocks = [];
+            if (statsType === 'duplicate' && theme) {
+                stocks = data.duplicate_stocks || []; // 테마별 통계
+            } else {
+                stocks = data.stocks || []; // 전체 통계
+            }
+            
+            renderStatsTable(stocks, statsType);
         } catch (error) {
             console.error('Error loading stats data:', error);
             alert('통계 데이터를 가져오는 데 실패했습니다.');
@@ -379,14 +389,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.tagName === 'LI' && e.target.dataset.ticker) {
             const ticker = e.target.dataset.ticker;
             
-            // 활성 클래스 관리
             const currentActive = etfList.querySelector('.active');
             if (currentActive) {
                 currentActive.classList.remove('active');
             }
             e.target.classList.add('active');
 
-            // ETF 상세 뷰로 자동 전환
             if (currentView === 'stats') {
                 switchView('etf');
             }
@@ -409,11 +417,11 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshBtn.addEventListener('click', async () => {
         showLoading('최신 데이터로 업데이트 중입니다...');
         try {
-            const response = await fetch('/api/refresh', { method: 'POST' });
+            // ⚠️ 변경: /api/refresh → /api/system/update
+            const response = await fetch('/api/system/update', { method: 'POST' });
             const result = await response.json();
             alert(result.message);
             
-            // 현재 선택된 ETF가 있다면, 해당 정보도 새로고침
             const activeEtf = etfList.querySelector('.active');
             if (activeEtf && currentView === 'etf') {
                 await fetchEtfDetails(activeEtf.dataset.ticker);
@@ -430,7 +438,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     exportCsvBtn.addEventListener('click', () => {
         if (currentEtfData) {
-            window.location.href = `/api/export/csv/${currentEtfData.etf_ticker}`;
+            window.location.href = `/api/etf/${currentEtfData.etf_ticker}/export`;
         } else {
             alert('먼저 ETF를 선택해주세요.');
         }
@@ -444,7 +452,6 @@ document.addEventListener('DOMContentLoaded', () => {
     statsTypeSelect.addEventListener('change', () => {
         const statsType = statsTypeSelect.value;
         
-        // 중복 종목일 때만 테마 선택 활성화
         if (statsType === 'duplicate') {
             themeSelect.disabled = false;
         } else {
