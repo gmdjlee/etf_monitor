@@ -1,5 +1,5 @@
 """
-ETF Repository 인터페이스
+ETF Repository 인터페이스 (개선됨)
 ETF 데이터 접근을 위한 추상 인터페이스입니다.
 """
 
@@ -70,6 +70,22 @@ class ETFRepository(BaseRepository[ETF, str]):
 
         Returns:
             액티브 ETF 엔티티 리스트
+        """
+        pass
+
+    # ✅ 추가: N+1 쿼리 방지를 위한 메서드
+    @abstractmethod
+    def find_by_tickers(self, tickers: List[str]) -> List[ETF]:
+        """
+        여러 티커에 해당하는 ETF들을 한 번에 조회합니다.
+
+        N+1 쿼리 문제를 방지하기 위해 사용됩니다.
+
+        Args:
+            tickers: ETF 코드 리스트
+
+        Returns:
+            찾은 ETF 엔티티 리스트
         """
         pass
 

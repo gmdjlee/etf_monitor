@@ -1,11 +1,16 @@
 """
-Stock Statistics Query
+Stock Statistics Query (최적화됨)
 종목 통계 조회를 위한 Query 객체입니다.
-CQRS 패턴의 Query 측면을 구현합니다.
+✅ N+1 쿼리 문제 해결
 """
 
 from datetime import datetime
 from typing import List, Optional
+
+from config.logging_config import LoggerMixin
+from domain.repositories.etf_repository import ETFRepository
+from domain.services.statistics_calculator import StatisticsCalculator
+from shared.utils.date_utils import to_date_string
 
 from application.dto.statistics_dto import (
     AmountRankingDto,
@@ -14,10 +19,6 @@ from application.dto.statistics_dto import (
     DuplicateStockStatsDto,
     ThemeStatsDto,
 )
-from config.logging_config import LoggerMixin
-from domain.repositories.etf_repository import ETFRepository
-from domain.services.statistics_calculator import StatisticsCalculator
-from shared.utils.date_utils import to_date_string
 
 
 class StockStatisticsQuery(LoggerMixin):
@@ -43,6 +44,8 @@ class StockStatisticsQuery(LoggerMixin):
         """
         중복 종목 통계를 조회합니다.
 
+        ✅ 최적화: ETF 정보를 필요한 것만 일괄 조회
+
         Args:
             date: 기준일 (None이면 최신 날짜)
             min_count: 최소 중복 횟수
@@ -59,15 +62,13 @@ class StockStatisticsQuery(LoggerMixin):
             if not date:
                 raise ValueError("No data available")
 
-        # 전체 ETF 조회
-        all_etfs = self.etf_repo.find_all()
+        # ✅ 개선: 전체 ETF 조회 제거 (필요 없음)
+        # all_etfs = self.etf_repo.find_all()  # ❌ 제거
 
         # 해당 날짜의 모든 보유 종목 조회
         all_holdings = self.etf_repo.find_holdings_by_date(date)
 
-        self.logger.debug(
-            f"Analyzing {len(all_holdings)} holdings from {len(all_etfs)} ETFs"
-        )
+        self.logger.debug(f"Analyzing {len(all_holdings)} holdings")
 
         # 중복 종목 계산
         duplicate_stocks = self.calculator.calculate_duplicate_stocks(
@@ -77,15 +78,24 @@ class StockStatisticsQuery(LoggerMixin):
         # 상위 N개만 선택
         duplicate_stocks = duplicate_stocks[:limit]
 
+        # ✅ 최적화: ETF 이름을 일괄 조회
+        # 1. 필요한 ETF ticker들을 모두 수집
+        all_etf_tickers = set()
+        for stock in duplicate_stocks:
+            all_etf_tickers.update(stock["etf_tickers"])
+
+        # 2. 한 번에 조회 (N+1 쿼리 방지)
+        etfs = self.etf_repo.find_by_tickers(list(all_etf_tickers))
+        etf_name_map = {etf.ticker: etf.name for etf in etfs}
+
         # DTO 변환
         stock_dtos = []
         for stock in duplicate_stocks:
-            # ETF 이름 조회
-            etf_names = []
-            for etf_ticker in stock["etf_tickers"]:
-                etf = self.etf_repo.find_by_ticker(etf_ticker)
-                if etf:
-                    etf_names.append(etf.name)
+            # ✅ 개선: 이미 조회한 맵에서 가져오기 (추가 쿼리 없음)
+            etf_names = [
+                etf_name_map.get(etf_ticker, etf_ticker)
+                for etf_ticker in stock["etf_tickers"]
+            ]
 
             stock_dtos.append(
                 DuplicateStockDto(
@@ -103,9 +113,12 @@ class StockStatisticsQuery(LoggerMixin):
         # 요약 정보 생성
         summary = self._create_duplicate_summary(duplicate_stocks)
 
+        # ✅ 개선: ETF 개수는 실제 조회한 ETF 수로 계산
+        total_etfs = len(set(h.etf_ticker for h in all_holdings))
+
         return DuplicateStockStatsDto(
             date=to_date_string(date),
-            total_etfs=len(all_etfs),
+            total_etfs=total_etfs,
             stocks=stock_dtos,
             summary=summary,
         )
@@ -165,6 +178,8 @@ class StockStatisticsQuery(LoggerMixin):
         """
         특정 테마의 통계를 조회합니다.
 
+        ✅ 최적화: ETF 정보를 필요한 것만 일괄 조회
+
         Args:
             theme: 테마 키워드
             date: 기준일 (None이면 최신 날짜)
@@ -181,7 +196,7 @@ class StockStatisticsQuery(LoggerMixin):
             if not date:
                 raise ValueError("No data available")
 
-        # 전체 ETF와 보유 종목 조회
+        # ✅ 개선: 전체 ETF를 먼저 조회 (테마 필터링을 위해 필요)
         all_etfs = self.etf_repo.find_all()
         all_holdings = self.etf_repo.find_holdings_by_date(date)
 
@@ -190,15 +205,25 @@ class StockStatisticsQuery(LoggerMixin):
             all_holdings, all_etfs, theme
         )
 
+        # ✅ 최적화: 중복 종목의 ETF 이름을 일괄 조회
+        all_etf_tickers_in_duplicates = set()
+        for stock in theme_stats["duplicate_stocks"][:limit]:
+            all_etf_tickers_in_duplicates.update(stock["etf_tickers"])
+
+        # 한 번에 조회
+        etfs_for_duplicates = self.etf_repo.find_by_tickers(
+            list(all_etf_tickers_in_duplicates)
+        )
+        etf_name_map = {etf.ticker: etf.name for etf in etfs_for_duplicates}
+
         # 중복 종목 DTO 변환
         duplicate_dtos = []
         for stock in theme_stats["duplicate_stocks"][:limit]:
-            # ETF 이름 조회
-            etf_names = []
-            for etf_ticker in stock["etf_tickers"]:
-                etf = self.etf_repo.find_by_ticker(etf_ticker)
-                if etf:
-                    etf_names.append(etf.name)
+            # 이미 조회한 맵에서 가져오기
+            etf_names = [
+                etf_name_map.get(etf_ticker, etf_ticker)
+                for etf_ticker in stock["etf_tickers"]
+            ]
 
             duplicate_dtos.append(
                 DuplicateStockDto(
@@ -219,12 +244,9 @@ class StockStatisticsQuery(LoggerMixin):
 
         top_stocks = self.calculator.calculate_amount_ranking(theme_holdings, 10)
 
-        # ETF 이름 조회
-        etf_names = []
-        for ticker in theme_stats["etf_tickers"]:
-            etf = self.etf_repo.find_by_ticker(ticker)
-            if etf:
-                etf_names.append(etf.name)
+        # ✅ 최적화: 테마 ETF 이름을 일괄 조회
+        theme_etfs = self.etf_repo.find_by_tickers(theme_stats["etf_tickers"])
+        etf_names = [etf.name for etf in theme_etfs]
 
         return ThemeStatsDto(
             theme=theme,

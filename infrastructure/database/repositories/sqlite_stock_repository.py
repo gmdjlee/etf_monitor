@@ -9,8 +9,9 @@ from typing import List, Optional
 from config.logging_config import LoggerMixin
 from domain.entities.stock import Stock
 from domain.repositories.stock_repository import StockRepository
-from infrastructure.database.connection import DatabaseConnection
 from shared.exceptions import DatabaseException
+
+from infrastructure.database.connection import DatabaseConnection
 
 
 class SQLiteStockRepository(StockRepository, LoggerMixin):
@@ -130,24 +131,48 @@ class SQLiteStockRepository(StockRepository, LoggerMixin):
             raise DatabaseException("find_by_name_like", str(e))
 
     def find_by_tickers(self, tickers: List[str]) -> List[Stock]:
-        """여러 티커에 해당하는 주식들을 조회합니다."""
+        """
+        여러 티커에 해당하는 주식들을 조회합니다.
+
+        ✅ 개선: 빈 리스트 체크 및 로깅 추가
+
+        Args:
+            tickers: 종목 코드 리스트
+
+        Returns:
+            찾은 Stock 엔티티 리스트
+        """
         try:
             if not tickers:
                 return []
 
+            # SQL IN 절을 위한 플레이스홀더 생성
             placeholders = ",".join(["?" for _ in tickers])
             query = f"""
                 SELECT ticker, name
                 FROM data_stocks
                 WHERE ticker IN ({placeholders})
+                ORDER BY ticker
             """
 
             cursor = self.db_conn.execute_query(query, tuple(tickers))
             rows = cursor.fetchall()
 
-            return [
+            stocks = [
                 Stock.create(ticker=row["ticker"], name=row["name"]) for row in rows
             ]
+
+            # ✅ 추가: 로깅 및 누락된 ticker 확인
+            found_tickers = {stock.ticker for stock in stocks}
+            missing_tickers = set(tickers) - found_tickers
+
+            if missing_tickers:
+                self.logger.warning(
+                    f"Some tickers not found in database: {missing_tickers}"
+                )
+
+            self.logger.debug(f"Found {len(stocks)} stocks from {len(tickers)} tickers")
+            return stocks
 
         except sqlite3.Error as e:
             self.logger.error(f"Failed to find stocks by tickers: {e}", exc_info=True)

@@ -1,19 +1,19 @@
 """
-Get Holdings Comparison Use Case
+Get Holdings Comparison Use Case (개선됨)
 보유 종목 비교 조회 유스케이스입니다.
+✅ 중복 Query 생성 제거
 """
 
 from datetime import datetime
 from typing import Optional
 
-from application.dto.holdings_dto import HoldingsComparisonResultDto
-from application.queries.holdings_comparison_query import HoldingsComparisonQuery
 from config.logging_config import LoggerMixin
 from domain.repositories.etf_repository import ETFRepository
-from domain.repositories.stock_repository import StockRepository
-from domain.services.holdings_analyzer import HoldingsAnalyzer
 from shared.exceptions import EntityNotFoundException
 from shared.result import Result
+
+from application.dto.holdings_dto import HoldingsComparisonResultDto
+from application.queries.holdings_comparison_query import HoldingsComparisonQuery
 
 
 class GetHoldingsComparisonUseCase(LoggerMixin):
@@ -22,24 +22,20 @@ class GetHoldingsComparisonUseCase(LoggerMixin):
 
     특정 ETF의 두 시점 간 보유 종목을 비교하여 변화를 조회합니다.
 
+    ✅ 개선: Query를 직접 생성하지 않고 주입받음 (단일 책임 원칙)
+
     Args:
         etf_repository: ETF 리포지토리
-        stock_repository: Stock 리포지토리
-        holdings_analyzer: 보유 종목 분석 서비스
+        holdings_comparison_query: 보유 종목 비교 쿼리 (주입)
     """
 
     def __init__(
         self,
         etf_repository: ETFRepository,
-        stock_repository: StockRepository,
-        holdings_analyzer: HoldingsAnalyzer,
+        holdings_comparison_query: HoldingsComparisonQuery,  # ✅ 주입받기
     ):
         self.etf_repo = etf_repository
-        self.stock_repo = stock_repository
-        self.analyzer = holdings_analyzer
-        self.query = HoldingsComparisonQuery(
-            etf_repository, stock_repository, holdings_analyzer
-        )
+        self.query = holdings_comparison_query  # ✅ 중복 생성 제거
 
     def execute(
         self,
@@ -66,7 +62,7 @@ class GetHoldingsComparisonUseCase(LoggerMixin):
             if not etf:
                 raise EntityNotFoundException("ETF", etf_ticker)
 
-            # 쿼리 실행
+            # ✅ 주입받은 쿼리 실행
             result_dto = self.query.execute(
                 etf_ticker=etf_ticker,
                 current_date=current_date,
@@ -123,18 +119,28 @@ class GetHoldingsComparisonUseCase(LoggerMixin):
                     f"해당 날짜의 데이터가 없습니다: {date.strftime('%Y-%m-%d')}"
                 )
 
-            # 상위 N개 추출
-            top_holdings = self.analyzer.get_top_holdings(holdings, top_n)
+            # 상위 N개 추출 (비중 기준 정렬)
+            top_holdings = sorted(holdings, key=lambda h: h.weight, reverse=True)[
+                :top_n
+            ]
 
             # 집중도 계산
-            concentration = self.analyzer.calculate_concentration_ratio(holdings, top_n)
+            concentration = sum(h.weight for h in top_holdings)
 
             result = {
                 "etf_ticker": etf_ticker,
                 "date": date.strftime("%Y-%m-%d"),
                 "top_n": top_n,
-                "holdings": [h.to_dict() for h in top_holdings],
-                "concentration_ratio": concentration,
+                "holdings": [
+                    {
+                        "stock_ticker": h.stock_ticker,
+                        "stock_name": h.stock_name,
+                        "weight": h.weight,
+                        "amount": h.amount,
+                    }
+                    for h in top_holdings
+                ],
+                "concentration_ratio": round(concentration, 2),
                 "total_holdings": len(holdings),
             }
 
@@ -176,13 +182,22 @@ class GetHoldingsComparisonUseCase(LoggerMixin):
                 )
 
             # 통계 계산
-            total_weight = self.analyzer.calculate_total_weight(holdings)
-            total_amount = self.analyzer.calculate_total_amount(holdings)
-            top_10_concentration = self.analyzer.calculate_concentration_ratio(
-                holdings, 10
-            )
-            significant_holdings = self.analyzer.get_significant_holdings(holdings, 1.0)
-            weight_groups = self.analyzer.group_by_weight_range(holdings)
+            total_weight = sum(h.weight for h in holdings)
+            total_amount = sum(h.amount for h in holdings)
+
+            # 상위 10개 비중 합계
+            top_10 = sorted(holdings, key=lambda h: h.weight, reverse=True)[:10]
+            top_10_concentration = sum(h.weight for h in top_10)
+
+            # 유의미한 비중(1% 이상) 종목 수
+            significant_holdings = [h for h in holdings if h.weight >= 1.0]
+
+            # 비중 범위별 분류
+            weight_groups = {
+                "large": [h for h in holdings if h.weight >= 5.0],
+                "medium": [h for h in holdings if 1.0 <= h.weight < 5.0],
+                "small": [h for h in holdings if h.weight < 1.0],
+            }
 
             summary = {
                 "etf_ticker": etf_ticker,

@@ -6,18 +6,14 @@ Database Migrations
 import sqlite3
 
 from config.logging_config import LoggerMixin
-from infrastructure.database.connection import DatabaseConnection
 from shared.exceptions import DatabaseException
+
+from infrastructure.database.connection import DatabaseConnection
 
 
 class DatabaseMigrations(LoggerMixin):
     """
     데이터베이스 마이그레이션 관리 클래스
-
-    스키마 생성 및 업데이트를 관리합니다.
-
-    Args:
-        db_connection: 데이터베이스 연결
     """
 
     def __init__(self, db_connection: DatabaseConnection):
@@ -37,7 +33,7 @@ class DatabaseMigrations(LoggerMixin):
                 # 데이터 테이블
                 self._create_data_tables(conn)
 
-                # 인덱스 생성
+                # ✅ 인덱스 생성 (성능 최적화)
                 self._create_indexes(conn)
 
             self.logger.info("Database tables created successfully")
@@ -109,34 +105,114 @@ class DatabaseMigrations(LoggerMixin):
         self.logger.debug("Data tables created")
 
     def _create_indexes(self, conn: sqlite3.Connection) -> None:
-        """성능 향상을 위한 인덱스를 생성합니다."""
-        # ETF 보유 종목 관련 인덱스
+        """
+        성능 향상을 위한 인덱스를 생성합니다.
+
+        ✅ Medium Priority: 쿼리 성능 최적화
+        """
+        # ==========================================
+        # 기존 인덱스 (High Priority에서 생성됨)
+        # ==========================================
+
+        # ETF + 날짜 복합 인덱스 (가장 많이 사용)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_holdings_etf_date 
             ON data_etf_holdings (etf_ticker, date)
         """)
 
+        # 종목 + 날짜 복합 인덱스
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_holdings_stock_date 
             ON data_etf_holdings (stock_ticker, date)
         """)
 
+        # 날짜 단독 인덱스
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_holdings_date 
             ON data_etf_holdings (date)
         """)
 
+        # 비중 인덱스 (정렬용)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_holdings_weight 
             ON data_etf_holdings (weight)
         """)
 
+        # 금액 인덱스 (정렬용)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_holdings_amount 
             ON data_etf_holdings (amount)
         """)
 
-        self.logger.debug("Indexes created")
+        # ==========================================
+        # ✅ NEW: Medium Priority 최적화 인덱스
+        # ==========================================
+
+        # 1. 날짜 + 비중 DESC 복합 인덱스
+        # 용도: 특정 날짜의 상위 비중 종목 조회 시 정렬 성능 향상
+        # 쿼리 예: SELECT * FROM holdings WHERE date = ? ORDER BY weight DESC
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_holdings_date_weight_desc 
+            ON data_etf_holdings (date, weight DESC)
+        """)
+
+        # 2. 날짜 + 금액 DESC 복합 인덱스
+        # 용도: 특정 날짜의 금액 순위 조회 시 성능 향상
+        # 쿼리 예: SELECT * FROM holdings WHERE date = ? ORDER BY amount DESC
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_holdings_date_amount_desc 
+            ON data_etf_holdings (date, amount DESC)
+        """)
+
+        # 3. ETF + 날짜 + 비중 DESC 복합 인덱스
+        # 용도: 특정 ETF의 특정 날짜 상위 종목 조회 최적화
+        # 쿼리 예: SELECT * FROM holdings WHERE etf_ticker = ? AND date = ? ORDER BY weight DESC
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_holdings_etf_date_weight 
+            ON data_etf_holdings (etf_ticker, date, weight DESC)
+        """)
+
+        # 4. 종목 + 날짜 + 비중 복합 인덱스
+        # 용도: 특정 종목이 여러 ETF에서 차지하는 비중 조회
+        # 쿼리 예: SELECT * FROM holdings WHERE stock_ticker = ? AND date = ? ORDER BY weight DESC
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_holdings_stock_date_weight 
+            ON data_etf_holdings (stock_ticker, date, weight DESC)
+        """)
+
+        # 5. 날짜 + ETF + 종목 커버링 인덱스
+        # 용도: 통계 쿼리 시 테이블 스캔 없이 인덱스만으로 조회
+        # 쿼리 예: SELECT etf_ticker, stock_ticker, weight FROM holdings WHERE date = ?
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_holdings_date_covering 
+            ON data_etf_holdings (date, etf_ticker, stock_ticker, weight, amount)
+        """)
+
+        # 6. ETF명 검색 최적화 (LIKE 쿼리용)
+        # 용도: ETF명 부분 검색 성능 향상
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_etfs_name 
+            ON data_etfs (name COLLATE NOCASE)
+        """)
+
+        # 7. 주식명 검색 최적화
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_stocks_name 
+            ON data_stocks (name COLLATE NOCASE)
+        """)
+
+        # 8. Config 테마/제외 키워드 검색 최적화
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_themes_name 
+            ON config_themes (name COLLATE NOCASE)
+        """)
+
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_exclusions_keyword 
+            ON config_exclusions (keyword COLLATE NOCASE)
+        """)
+
+        self.logger.info("✅ All indexes created (including performance optimizations)")
 
     def migrate_add_amount_column(self) -> None:
         """
@@ -211,6 +287,9 @@ class DatabaseMigrations(LoggerMixin):
             # 추가 마이그레이션
             self.migrate_add_amount_column()
             self.migrate_add_timestamps()
+
+            # ✅ NEW: 최적화 인덱스 추가
+            self.migrate_add_optimized_indexes()
 
             self.logger.info("All migrations completed successfully")
 
@@ -301,3 +380,141 @@ class DatabaseMigrations(LoggerMixin):
         except Exception as e:
             self.logger.error(f"Failed to get database info: {e}", exc_info=True)
             return {}
+
+    def analyze_query_plan(self, query: str, params: tuple = ()) -> None:
+        """
+        쿼리 실행 계획을 분석하여 인덱스 사용 여부를 확인합니다.
+
+        ✅ 개발/디버깅 용도: 쿼리 최적화 확인
+
+        Args:
+            query: 분석할 SQL 쿼리
+            params: 쿼리 파라미터
+        """
+        try:
+            conn = self.db_conn.get_connection()
+            cursor = conn.cursor()
+
+            # EXPLAIN QUERY PLAN 실행
+            explain_query = f"EXPLAIN QUERY PLAN {query}"
+            cursor.execute(explain_query, params)
+
+            self.logger.info("Query Plan Analysis:")
+            self.logger.info(f"Query: {query}")
+
+            for row in cursor.fetchall():
+                # SQLite EXPLAIN QUERY PLAN 결과 출력
+                self.logger.info(f"  {row}")
+
+            cursor.close()
+
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to analyze query plan: {e}", exc_info=True)
+
+    def get_index_usage_stats(self) -> dict:
+        """
+        인덱스 사용 통계를 반환합니다.
+
+        Returns:
+            인덱스 정보 딕셔너리
+        """
+        try:
+            conn = self.db_conn.get_connection()
+            cursor = conn.cursor()
+
+            # 모든 인덱스 조회
+            cursor.execute("""
+                SELECT name, tbl_name 
+                FROM sqlite_master 
+                WHERE type = 'index' 
+                  AND sql IS NOT NULL
+                ORDER BY tbl_name, name
+            """)
+
+            indexes = {}
+            for row in cursor.fetchall():
+                index_name = row[0]
+                table_name = row[1]
+
+                if table_name not in indexes:
+                    indexes[table_name] = []
+
+                indexes[table_name].append(index_name)
+
+            cursor.close()
+            return indexes
+
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to get index stats: {e}", exc_info=True)
+            return {}
+
+    def migrate_add_optimized_indexes(self) -> None:
+        """
+        ✅ Medium Priority 마이그레이션: 최적화된 인덱스 추가
+
+        기존 데이터베이스에 새로운 인덱스만 추가합니다.
+        """
+        try:
+            self.logger.info("Adding optimized indexes for Medium Priority...")
+
+            conn = self.db_conn.get_connection()
+
+            with conn:
+                # 날짜 + 비중 DESC
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_holdings_date_weight_desc 
+                    ON data_etf_holdings (date, weight DESC)
+                """)
+
+                # 날짜 + 금액 DESC
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_holdings_date_amount_desc 
+                    ON data_etf_holdings (date, amount DESC)
+                """)
+
+                # ETF + 날짜 + 비중
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_holdings_etf_date_weight 
+                    ON data_etf_holdings (etf_ticker, date, weight DESC)
+                """)
+
+                # 종목 + 날짜 + 비중
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_holdings_stock_date_weight 
+                    ON data_etf_holdings (stock_ticker, date, weight DESC)
+                """)
+
+                # 커버링 인덱스
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_holdings_date_covering 
+                    ON data_etf_holdings (date, etf_ticker, stock_ticker, weight, amount)
+                """)
+
+                # ETF명 검색
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_etfs_name 
+                    ON data_etfs (name COLLATE NOCASE)
+                """)
+
+                # 주식명 검색
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_stocks_name 
+                    ON data_stocks (name COLLATE NOCASE)
+                """)
+
+                # Config 인덱스
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_themes_name 
+                    ON config_themes (name COLLATE NOCASE)
+                """)
+
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_exclusions_keyword 
+                    ON config_exclusions (keyword COLLATE NOCASE)
+                """)
+
+            self.logger.info("✅ Optimized indexes added successfully")
+
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to add optimized indexes: {e}", exc_info=True)
+            raise DatabaseException("migrate_add_optimized_indexes", str(e))

@@ -1,5 +1,5 @@
 """
-애플리케이션 설정
+애플리케이션 설정 (Medium Priority 확인)
 상수, 기본값, 환경 변수 등을 관리합니다.
 """
 
@@ -12,7 +12,7 @@ class Settings:
 
     # 애플리케이션 정보
     APP_NAME = "ETF Monitoring System"
-    APP_VERSION = "2.0.0"
+    APP_VERSION = "2.1.0"  # ✅ 버전 업데이트
 
     # 데이터베이스 설정
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,14 +26,14 @@ class Settings:
     FLASK_HOST = os.getenv("FLASK_HOST", "127.0.0.1")
 
     # 데이터 수집 설정
-    DEFAULT_COLLECT_DAYS = 5  # 초기 데이터 수집 일수
-    MAX_COLLECT_DAYS = 180  # 최대 수집 일수 (약 6개월)
-    API_DELAY_SECONDS = 0.1  # API 호출 간 지연 시간 (초)
-    RETRY_MAX_ATTEMPTS = 3  # API 호출 재시도 횟수
-    RETRY_DELAY_SECONDS = 1  # 재시도 대기 시간
+    DEFAULT_COLLECT_DAYS = 5
+    MAX_COLLECT_DAYS = 180
+    API_DELAY_SECONDS = 0.1
+    RETRY_MAX_ATTEMPTS = 3
+    RETRY_DELAY_SECONDS = 1
 
     # ETF 필터링 설정
-    REQUIRE_ACTIVE_KEYWORD = True  # '액티브' 키워드 필수 여부
+    REQUIRE_ACTIVE_KEYWORD = True
     ACTIVE_KEYWORD = "액티브"
 
     # 기본 테마 키워드
@@ -89,21 +89,27 @@ class Settings:
     ]
 
     # 통계 설정
-    DEFAULT_STATS_LIMIT = 100  # 통계 조회 시 기본 제한 개수
-    MIN_DUPLICATE_COUNT = 2  # 중복 종목으로 간주할 최소 ETF 개수
+    DEFAULT_STATS_LIMIT = 100
+    MIN_DUPLICATE_COUNT = 2
 
     # CSV 내보내기 설정
     EXPORT_DIR = os.path.join(BASE_DIR, "temp_exports")
-    CSV_ENCODING = "utf-8-sig"  # 엑셀 호환 UTF-8
+    CSV_ENCODING = "utf-8-sig"
 
     # 로깅 설정
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-    # 캐싱 설정
-    CACHE_ENABLED = os.getenv("CACHE_ENABLED", "False").lower() == "true"
-    CACHE_TTL_SECONDS = 300  # 캐시 유효 시간 (5분)
+    # ✅ 캐싱 설정 (Medium Priority)
+    CACHE_ENABLED = os.getenv("CACHE_ENABLED", "True").lower() == "true"
+    CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "300"))  # 5분
+
+    # 캐시 TTL 세부 설정
+    CACHE_TTL_ETF_LIST = 300  # ETF 목록: 5분
+    CACHE_TTL_ETF_DETAIL = 600  # ETF 상세: 10분
+    CACHE_TTL_HOLDINGS = 180  # 보유 종목: 3분
+    CACHE_TTL_STATISTICS = 300  # 통계: 5분
 
     # 페이징 설정
     DEFAULT_PAGE_SIZE = 10
@@ -115,12 +121,12 @@ class Settings:
     KRX_DATE_FORMAT = "%Y%m%d"
 
     # API 응답 설정
-    JSON_AS_ASCII = False  # 한글 지원
+    JSON_AS_ASCII = False
     JSON_SORT_KEYS = False
 
     # 비즈니스 규칙
-    MIN_WEIGHT_THRESHOLD = 0.01  # 최소 비중 임계값 (%)
-    WEIGHT_CHANGE_SIGNIFICANT = 0.5  # 의미있는 비중 변화 임계값 (%)
+    MIN_WEIGHT_THRESHOLD = 0.01
+    WEIGHT_CHANGE_SIGNIFICANT = 0.5
 
     @classmethod
     def ensure_directories(cls):
@@ -153,50 +159,44 @@ class MarketSettings:
     MARKETS = [KOSPI, KOSDAQ]
 
     # 영업일 설정
-    BUSINESS_DAYS = [0, 1, 2, 3, 4]  # 월~금 (weekday 기준)
+    BUSINESS_DAYS = [0, 1, 2, 3, 4]  # 월~금
 
     # 시장 개장 시간
     MARKET_OPEN_HOUR = 9
     MARKET_CLOSE_HOUR = 15
     MARKET_CLOSE_MINUTE = 30
 
-    # 대표 종목 (시장 개장 확인용)
+    # 대표 종목
     REFERENCE_TICKER = "005930"  # 삼성전자
 
 
 class FilterSettings:
     """필터링 관련 설정"""
 
-    # 필터 유형
     FILTER_TYPE_THEME = "theme"
     FILTER_TYPE_EXCLUSION = "exclusion"
     FILTER_TYPE_ACTIVE = "active"
 
-    # 필터 연산자
     OPERATOR_AND = "AND"
     OPERATOR_OR = "OR"
 
-    # 기본 필터 설정
     DEFAULT_FILTER_OPERATOR = OPERATOR_AND
 
 
 class StatisticsSettings:
     """통계 관련 설정"""
 
-    # 통계 유형
     STATS_TYPE_DUPLICATE = "duplicate"
     STATS_TYPE_AMOUNT = "amount"
     STATS_TYPE_WEIGHT = "weight"
 
-    # 정렬 기준
     SORT_BY_COUNT = "count"
     SORT_BY_AMOUNT = "amount"
     SORT_BY_WEIGHT = "weight"
     SORT_BY_NAME = "name"
 
-    # 기본 설정
     DEFAULT_SORT_BY = SORT_BY_COUNT
-    DEFAULT_SORT_ORDER = "desc"  # asc, desc
+    DEFAULT_SORT_ORDER = "desc"
 
 
 # 싱글톤 인스턴스
@@ -204,7 +204,6 @@ settings = Settings()
 market_settings = MarketSettings()
 filter_settings = FilterSettings()
 statistics_settings = StatisticsSettings()
-
 
 # 애플리케이션 시작 시 필요한 디렉토리 생성
 settings.ensure_directories()

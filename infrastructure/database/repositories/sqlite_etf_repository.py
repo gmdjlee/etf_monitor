@@ -11,9 +11,11 @@ from config.logging_config import LoggerMixin
 from domain.entities.etf import ETF
 from domain.entities.holding import Holding
 from domain.repositories.etf_repository import ETFRepository
-from infrastructure.database.connection import DatabaseConnection
 from shared.exceptions import DatabaseException
 from shared.utils.date_utils import from_date_string, to_date_string
+
+from infrastructure.cache import cached, invalidate_cache
+from infrastructure.database.connection import DatabaseConnection
 
 
 class SQLiteETFRepository(ETFRepository, LoggerMixin):
@@ -29,8 +31,13 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
 
     # ETF 기본 조회
 
+    # ✅ 캐시 무효화: 데이터 저장 시
     def save(self, entity: ETF) -> None:
-        """ETF를 저장합니다."""
+        """
+        ETF를 저장합니다.
+
+        ✅ 캐시 무효화: ETF 관련 캐시 삭제
+        """
         try:
             query = """
                 INSERT OR REPLACE INTO data_etfs (ticker, name, updated_at)
@@ -41,14 +48,22 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
             conn.execute(query, (entity.ticker, entity.name))
             conn.commit()
 
-            self.logger.debug(f"Saved ETF: {entity.ticker}")
+            # ✅ 캐시 무효화
+            invalidate_cache("etf:*")
+
+            self.logger.debug(f"Saved ETF: {entity.ticker} (cache invalidated)")
 
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save ETF: {e}", exc_info=True)
             raise DatabaseException("save", str(e))
 
+    # ✅ 캐시 무효화: 일괄 저장 시
     def save_all(self, entities: List[ETF]) -> None:
-        """여러 ETF를 일괄 저장합니다."""
+        """
+        여러 ETF를 일괄 저장합니다.
+
+        ✅ 캐시 무효화: ETF 관련 캐시 삭제
+        """
         try:
             query = """
                 INSERT OR IGNORE INTO data_etfs (ticker, name)
@@ -61,7 +76,10 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
             conn.executemany(query, data)
             conn.commit()
 
-            self.logger.info(f"Saved {len(entities)} ETFs")
+            # ✅ 캐시 무효화
+            invalidate_cache("etf:*")
+
+            self.logger.info(f"Saved {len(entities)} ETFs (cache invalidated)")
 
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save ETFs: {e}", exc_info=True)
@@ -71,8 +89,14 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
         """ID(ticker)로 ETF를 조회합니다."""
         return self.find_by_ticker(id)
 
+    # ✅ 캐싱 적용: 개별 ETF 조회 (10분 캐시)
+    @cached(ttl=600, key_prefix="etf")
     def find_by_ticker(self, ticker: str) -> Optional[ETF]:
-        """티커로 ETF를 조회합니다."""
+        """
+        티커로 ETF를 조회합니다.
+
+        ✅ 캐싱: 10분간 캐시 유지
+        """
         try:
             query = """
                 SELECT ticker, name
@@ -132,8 +156,14 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
             self.logger.error(f"Failed to find ETFs by name like: {e}", exc_info=True)
             raise DatabaseException("find_by_name_like", str(e))
 
+    # ✅ 캐싱 적용: 액티브 ETF 목록 (5분 캐시)
+    @cached(ttl=300, key_prefix="etf:active")
     def find_active_etfs(self) -> List[ETF]:
-        """액티브 ETF들을 조회합니다."""
+        """
+        액티브 ETF들을 조회합니다.
+
+        ✅ 캐싱: 5분간 캐시 유지
+        """
         try:
             query = """
                 SELECT ticker, name
@@ -151,8 +181,15 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
             self.logger.error(f"Failed to find active ETFs: {e}", exc_info=True)
             raise DatabaseException("find_active_etfs", str(e))
 
+    # ✅ 캐싱 적용: ETF 목록 (5분 캐시)
+    @cached(ttl=300, key_prefix="etf")
     def find_all(self) -> List[ETF]:
-        """모든 ETF를 조회합니다."""
+        """
+        모든 ETF를 조회합니다.
+
+        ✅ 캐싱: 5분간 캐시 유지
+        ETF 목록은 자주 변경되지 않으므로 캐싱 효과가 큼
+        """
         try:
             query = """
                 SELECT ticker, name
@@ -259,8 +296,13 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
             self.logger.error(f"Failed to save holding: {e}", exc_info=True)
             raise DatabaseException("save_holding", str(e))
 
+    # ✅ 캐시 무효화: Holdings 저장 시
     def save_holdings(self, holdings: List[Holding]) -> None:
-        """여러 보유 종목 정보를 일괄 저장합니다."""
+        """
+        여러 보유 종목 정보를 일괄 저장합니다.
+
+        ✅ 캐시 무효화: 해당 ETF와 날짜 관련 캐시 삭제
+        """
         try:
             query = """
                 INSERT OR IGNORE INTO data_etf_holdings 
@@ -283,7 +325,14 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
             conn.executemany(query, data)
             conn.commit()
 
-            self.logger.debug(f"Saved {len(holdings)} holdings")
+            # ✅ 캐시 무효화: 영향받는 ETF와 날짜의 캐시만 삭제
+            if holdings:
+                etf_tickers = set(h.etf_ticker for h in holdings)
+                for ticker in etf_tickers:
+                    invalidate_cache(f"etf:holdings:{ticker}:*")
+                    invalidate_cache(f"etf:dates:{ticker}")
+
+            self.logger.debug(f"Saved {len(holdings)} holdings (cache invalidated)")
 
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save holdings: {e}", exc_info=True)
@@ -435,8 +484,14 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
             self.logger.error(f"Failed to get latest date: {e}", exc_info=True)
             raise DatabaseException("get_latest_date", str(e))
 
+    # ✅ 캐싱 적용: 날짜 목록 (10분 캐시)
+    @cached(ttl=600, key_prefix="etf:dates")
     def get_available_dates(self, etf_ticker: str) -> List[datetime]:
-        """특정 ETF의 데이터가 있는 모든 날짜를 조회합니다."""
+        """
+        특정 ETF의 데이터가 있는 모든 날짜를 조회합니다.
+
+        ✅ 캐싱: 10분간 캐시 유지
+        """
         try:
             query = """
                 SELECT DISTINCT date
@@ -561,3 +616,34 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
         except sqlite3.Error as e:
             self.logger.error(f"Failed to delete holdings by ETF: {e}", exc_info=True)
             raise DatabaseException("delete_holdings_by_etf", str(e))
+
+    def find_by_tickers(self, tickers: List[str]) -> List[ETF]:
+        """
+        여러 티커에 해당하는 ETF들을 한 번에 조회합니다.
+
+        ✅ N+1 쿼리 방지: 단일 쿼리로 여러 ETF를 한 번에 조회
+        """
+        try:
+            if not tickers:
+                return []
+
+            # SQL IN 절을 위한 플레이스홀더 생성
+            placeholders = ",".join(["?" for _ in tickers])
+            query = f"""
+                SELECT ticker, name
+                FROM data_etfs
+                WHERE ticker IN ({placeholders})
+                ORDER BY name
+            """
+
+            cursor = self.db_conn.execute_query(query, tuple(tickers))
+            rows = cursor.fetchall()
+
+            etfs = [ETF.create(ticker=row["ticker"], name=row["name"]) for row in rows]
+
+            self.logger.debug(f"Found {len(etfs)} ETFs from {len(tickers)} tickers")
+            return etfs
+
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to find ETFs by tickers: {e}", exc_info=True)
+            raise DatabaseException("find_by_tickers", str(e))
