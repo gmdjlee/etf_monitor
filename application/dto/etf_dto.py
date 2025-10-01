@@ -1,14 +1,16 @@
 """
-ETF DTO (Data Transfer Object)
-애플리케이션 레이어와 프레젠테이션 레이어 간 데이터 전송을 위한 객체입니다.
+ETF DTO (Data Transfer Object) - 개선됨
+✅ BaseDTO 상속으로 중복 제거
 """
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import List, Optional
+
+from application.dto.base_dto import BaseDTO
 
 
 @dataclass
-class ETFDto:
+class ETFDto(BaseDTO):
     """
     ETF 정보를 전송하기 위한 DTO
 
@@ -28,10 +30,6 @@ class ETFDto:
         if self.matched_themes is None:
             self.matched_themes = []
 
-    def to_dict(self) -> dict:
-        """딕셔너리로 변환"""
-        return asdict(self)
-
     @staticmethod
     def from_entity(etf, matched_themes: List[str] = None):
         """엔티티로부터 DTO 생성"""
@@ -44,7 +42,7 @@ class ETFDto:
 
 
 @dataclass
-class ETFListDto:
+class ETFListDto(BaseDTO):
     """
     ETF 목록을 전송하기 위한 DTO
 
@@ -59,7 +57,7 @@ class ETFListDto:
     filter_applied: bool = False
 
     def to_dict(self) -> dict:
-        """딕셔너리로 변환"""
+        """딕셔너리로 변환 (커스텀 구현)"""
         return {
             "etfs": [etf.to_dict() for etf in self.etfs],
             "total_count": self.total_count,
@@ -68,7 +66,7 @@ class ETFListDto:
 
 
 @dataclass
-class ETFDetailDto:
+class ETFDetailDto(BaseDTO):
     """
     ETF 상세 정보를 전송하기 위한 DTO
 
@@ -92,13 +90,9 @@ class ETFDetailDto:
         if self.available_dates is None:
             self.available_dates = []
 
-    def to_dict(self) -> dict:
-        """딕셔너리로 변환"""
-        return asdict(self)
-
 
 @dataclass
-class ETFFilterDto:
+class ETFFilterDto(BaseDTO):
     """
     ETF 필터 조건을 전송하기 위한 DTO
 
@@ -120,23 +114,9 @@ class ETFFilterDto:
         if self.exclusions is None:
             self.exclusions = []
 
-    def to_dict(self) -> dict:
-        """딕셔너리로 변환"""
-        return asdict(self)
-
-    @staticmethod
-    def from_dict(data: dict) -> "ETFFilterDto":
-        """딕셔너리로부터 DTO 생성"""
-        return ETFFilterDto(
-            themes=data.get("themes", []),
-            exclusions=data.get("exclusions", []),
-            require_active=data.get("require_active", True),
-            min_holdings=data.get("min_holdings"),
-        )
-
 
 @dataclass
-class ETFComparisonDto:
+class ETFComparisonDto(BaseDTO):
     """
     ETF 비교 결과를 전송하기 위한 DTO
 
@@ -155,7 +135,3 @@ class ETFComparisonDto:
     overlap_ratio: float
     unique_to_etf1: int
     unique_to_etf2: int
-
-    def to_dict(self) -> dict:
-        """딕셔너리로 변환"""
-        return asdict(self)

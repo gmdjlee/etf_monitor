@@ -11,7 +11,7 @@
         <header>
             <h1>설정</h1>
             <div class="header-controls">
-                 <a href="/" class="btn">메인으로 돌아가기</a>
+                <a href="/" class="btn">메인으로 돌아가기</a>
             </div>
         </header>
         
@@ -34,7 +34,7 @@
                     <button id="add-exclusion-btn" class="btn">추가</button>
                 </div>
                 <ul id="exclusion-list" class="config-list">
-                     <!-- 제외 키워드 목록이 동적으로 채워집니다. -->
+                    <!-- 제외 키워드 목록이 동적으로 채워집니다. -->
                 </ul>
             </section>
         </main>
@@ -44,87 +44,187 @@
         document.addEventListener('DOMContentLoaded', function() {
             const themeList = document.getElementById('theme-list');
             const exclusionList = document.getElementById('exclusion-list');
+            const newThemeInput = document.getElementById('new-theme');
+            const newExclusionInput = document.getElementById('new-exclusion');
+            const addThemeBtn = document.getElementById('add-theme-btn');
+            const addExclusionBtn = document.getElementById('add-exclusion');
 
-            // 테마 로드
+            // ✅ 수정: 테마 로드 (API 응답 구조에 맞게)
             function loadThemes() {
                 fetch('/api/config/themes')
                     .then(res => res.json())
                     .then(data => {
                         themeList.innerHTML = '';
-                        data.forEach(theme => {
+                        
+                        // ✅ 수정: data.themes 배열 사용
+                        const themes = data.themes || [];
+                        
+                        if (themes.length === 0) {
+                            themeList.innerHTML = '<li>등록된 테마가 없습니다.</li>';
+                            return;
+                        }
+                        
+                        themes.forEach(themeName => {
                             const li = document.createElement('li');
-                            li.innerHTML = `<span>${theme.name}</span> <button class="delete-btn" data-id="${theme.id}">삭제</button>`;
+                            // ✅ 수정: themeName은 문자열, data-name 사용
+                            li.innerHTML = `
+                                <span>${themeName}</span> 
+                                <button class="delete-btn" data-name="${themeName}" data-type="theme">삭제</button>
+                            `;
                             themeList.appendChild(li);
                         });
+                    })
+                    .catch(error => {
+                        console.error('테마 로드 실패:', error);
+                        themeList.innerHTML = '<li style="color: red;">테마 로드 중 오류가 발생했습니다.</li>';
                     });
             }
 
-            // 제외 키워드 로드
+            // ✅ 수정: 제외 키워드 로드 (API 응답 구조에 맞게)
             function loadExclusions() {
                 fetch('/api/config/exclusions')
                     .then(res => res.json())
                     .then(data => {
                         exclusionList.innerHTML = '';
-                        data.forEach(ex => {
+                        
+                        // ✅ 수정: data.exclusions 배열 사용
+                        const exclusions = data.exclusions || [];
+                        
+                        if (exclusions.length === 0) {
+                            exclusionList.innerHTML = '<li>등록된 제외 키워드가 없습니다.</li>';
+                            return;
+                        }
+                        
+                        exclusions.forEach(keyword => {
                             const li = document.createElement('li');
-                            li.innerHTML = `<span>${ex.keyword}</span> <button class="delete-btn" data-id="${ex.id}">삭제</button>`;
+                            // ✅ 수정: keyword는 문자열, data-name 사용
+                            li.innerHTML = `
+                                <span>${keyword}</span> 
+                                <button class="delete-btn" data-name="${keyword}" data-type="exclusion">삭제</button>
+                            `;
                             exclusionList.appendChild(li);
                         });
+                    })
+                    .catch(error => {
+                        console.error('제외 키워드 로드 실패:', error);
+                        exclusionList.innerHTML = '<li style="color: red;">제외 키워드 로드 중 오류가 발생했습니다.</li>';
                     });
             }
 
-            // 테마 추가
-            document.getElementById('add-theme-btn').addEventListener('click', () => {
-                const newThemeInput = document.getElementById('new-theme');
+            // ✅ 수정: 테마 추가
+            addThemeBtn.addEventListener('click', () => {
                 const name = newThemeInput.value.trim();
-                if (!name) return;
+                if (!name) {
+                    alert('테마 키워드를 입력해주세요.');
+                    return;
+                }
 
                 fetch('/api/config/themes', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name })
-                }).then(res => res.json()).then(() => {
-                    newThemeInput.value = '';
-                    loadThemes();
+                })
+                .then(res => res.json())
+                .then(result => {
+                    if (result.status === 'success') {
+                        newThemeInput.value = '';
+                        loadThemes();
+                        alert(result.message);
+                    } else {
+                        alert(result.message || '테마 추가에 실패했습니다.');
+                    }
+                })
+                .catch(error => {
+                    console.error('테마 추가 실패:', error);
+                    alert('테마 추가 중 오류가 발생했습니다.');
                 });
             });
 
-            // 제외 키워드 추가
-            document.getElementById('add-exclusion-btn').addEventListener('click', () => {
-                const newExclusionInput = document.getElementById('new-exclusion');
+            // ✅ 수정: 제외 키워드 추가
+            addExclusionBtn.addEventListener('click', () => {
                 const keyword = newExclusionInput.value.trim();
-                if (!keyword) return;
+                if (!keyword) {
+                    alert('제외 키워드를 입력해주세요.');
+                    return;
+                }
 
                 fetch('/api/config/exclusions', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ keyword })
-                }).then(res => res.json()).then(() => {
-                    newExclusionInput.value = '';
-                    loadExclusions();
+                })
+                .then(res => res.json())
+                .then(result => {
+                    if (result.status === 'success') {
+                        newExclusionInput.value = '';
+                        loadExclusions();
+                        alert(result.message);
+                    } else {
+                        alert(result.message || '제외 키워드 추가에 실패했습니다.');
+                    }
+                })
+                .catch(error => {
+                    console.error('제외 키워드 추가 실패:', error);
+                    alert('제외 키워드 추가 중 오류가 발생했습니다.');
                 });
             });
 
-            // 삭제 이벤트 리스너 (이벤트 위임)
+            // ✅ 수정: Enter 키 지원
+            newThemeInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    addThemeBtn.click();
+                }
+            });
+
+            newExclusionInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    addExclusionBtn.click();
+                }
+            });
+
+            // ✅ 수정: 삭제 이벤트 리스너 (이벤트 위임, data-name 사용)
             document.body.addEventListener('click', (e) => {
                 if (e.target.classList.contains('delete-btn')) {
-                    const id = e.target.dataset.id;
-                    const parentList = e.target.closest('ul');
+                    const name = e.target.dataset.name;
+                    const type = e.target.dataset.type;
+                    
+                    if (!name || !type) {
+                        console.error('삭제할 항목 정보가 없습니다.');
+                        return;
+                    }
+
+                    if (!confirm(`'${name}'을(를) 정말로 삭제하시겠습니까?`)) {
+                        return;
+                    }
+
                     let url;
                     let callback;
 
-                    if (parentList.id === 'theme-list') {
-                        url = `/api/config/themes/${id}`;
+                    if (type === 'theme') {
+                        // ✅ 수정: URL 인코딩 적용
+                        url = `/api/config/themes/${encodeURIComponent(name)}`;
                         callback = loadThemes;
-                    } else if (parentList.id === 'exclusion-list') {
-                        url = `/api/config/exclusions/${id}`;
+                    } else if (type === 'exclusion') {
+                        // ✅ 수정: URL 인코딩 적용
+                        url = `/api/config/exclusions/${encodeURIComponent(name)}`;
                         callback = loadExclusions;
                     }
 
-                    if (url && confirm('정말로 삭제하시겠습니까?')) {
+                    if (url) {
                         fetch(url, { method: 'DELETE' })
                             .then(res => res.json())
-                            .then(() => callback());
+                            .then(result => {
+                                if (result.status === 'success') {
+                                    callback();
+                                    alert(result.message);
+                                } else {
+                                    alert(result.message || '삭제에 실패했습니다.');
+                                }
+                            })
+                            .catch(error => {
+                                console.error('삭제 실패:', error);
+                                alert('삭제 중 오류가 발생했습니다.');
+                            });
                     }
                 }
             });

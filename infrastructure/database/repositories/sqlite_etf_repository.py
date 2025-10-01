@@ -301,7 +301,7 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
         """
         여러 보유 종목 정보를 일괄 저장합니다.
 
-        ✅ 캐시 무효화: 해당 ETF와 날짜 관련 캐시 삭제
+        ✅ 개선: 배치 캐시 무효화
         """
         try:
             query = """
@@ -325,14 +325,24 @@ class SQLiteETFRepository(ETFRepository, LoggerMixin):
             conn.executemany(query, data)
             conn.commit()
 
-            # ✅ 캐시 무효화: 영향받는 ETF와 날짜의 캐시만 삭제
+            # ✅ 개선: 배치 캐시 무효화
             if holdings:
-                etf_tickers = set(h.etf_ticker for h in holdings)
-                for ticker in etf_tickers:
-                    invalidate_cache(f"etf:holdings:{ticker}:*")
-                    invalidate_cache(f"etf:dates:{ticker}")
+                from infrastructure.cache import cache_manager
 
-            self.logger.debug(f"Saved {len(holdings)} holdings (cache invalidated)")
+                etf_tickers = set(h.etf_ticker for h in holdings)
+                patterns = []
+
+                for ticker in etf_tickers:
+                    patterns.append(f"etf:holdings:{ticker}:*")
+                    patterns.append(f"etf:dates:{ticker}")
+
+                # 한 번에 무효화
+                deleted_count = cache_manager.invalidate_multiple_patterns(patterns)
+
+                self.logger.debug(
+                    f"Saved {len(holdings)} holdings, "
+                    f"invalidated {deleted_count} cache entries"
+                )
 
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save holdings: {e}", exc_info=True)

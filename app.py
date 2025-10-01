@@ -1,7 +1,8 @@
 """
-ETF Monitoring Application (Medium Priority 적용)
-애플리케이션 진입점입니다.
-✅ 캐싱, 인덱스, 전역 예외 핸들러 적용
+ETF Monitoring Application (개선됨)
+✅ 불필요한 에러 핸들러 제거
+✅ 과도한 주석 제거
+✅ 코드 간소화
 """
 
 from application.queries.holdings_comparison_query import HoldingsComparisonQuery
@@ -34,55 +35,41 @@ from presentation.api.controllers.config_controller import ConfigController
 from presentation.api.controllers.etf_controller import ETFController
 from presentation.api.controllers.statistics_controller import StatisticsController
 from presentation.api.controllers.system_controller import SystemController
-
-# ✅ NEW: 전역 예외 핸들러 import
 from presentation.api.error_handlers import ErrorHandlers
 from presentation.api.routes import register_all_routes
 
 
 def create_app():
     """Flask 애플리케이션을 생성하고 설정합니다."""
-    # 로깅 초기화
     initialize_logging()
 
-    # Flask 앱 생성
     app = Flask(__name__)
     app.config["JSON_AS_ASCII"] = settings.JSON_AS_ASCII
 
-    # ✅ NEW: 전역 예외 핸들러 등록 (먼저 등록)
     ErrorHandlers.register_all_handlers(app)
 
-    # 데이터베이스 초기화
     migrations = DatabaseMigrations(db_connection)
-    migrations.run_all_migrations()  # ✅ 최적화 인덱스 포함
+    migrations.run_all_migrations()
 
-    # ==========================================
-    # 의존성 주입 - Infrastructure Layer
-    # ==========================================
+    # Infrastructure Layer
     stock_repo = SQLiteStockRepository(db_connection)
-    etf_repo = SQLiteETFRepository(db_connection)  # ✅ 캐싱 적용됨
+    etf_repo = SQLiteETFRepository(db_connection)
     config_repo = SQLiteConfigRepository(db_connection)
     market_adapter = PyKRXAdapter()
 
-    # ==========================================
-    # 의존성 주입 - Domain Layer
-    # ==========================================
+    # Domain Layer
     filter_service = ETFFilterService()
     holdings_analyzer = HoldingsAnalyzer()
     statistics_calculator = StatisticsCalculator()
 
-    # ==========================================
-    # 의존성 주입 - Application Layer (Queries)
-    # ==========================================
+    # Application Layer - Queries
     holdings_comparison_query = HoldingsComparisonQuery(
         etf_repo, stock_repo, holdings_analyzer
     )
     stock_statistics_query = StockStatisticsQuery(etf_repo, statistics_calculator)
     weight_history_query = WeightHistoryQuery(etf_repo)
 
-    # ==========================================
-    # 의존성 주입 - Application Layer (Use Cases)
-    # ==========================================
+    # Application Layer - Use Cases
     initialize_system_uc = InitializeSystemUseCase(
         etf_repo, stock_repo, config_repo, market_adapter, filter_service
     )
@@ -103,9 +90,7 @@ def create_app():
 
     export_data_uc = ExportDataUseCase(etf_repo, holdings_comparison_query)
 
-    # ==========================================
-    # 의존성 주입 - Presentation Layer (Controllers)
-    # ==========================================
+    # Presentation Layer - Controllers
     etf_controller = ETFController(
         etf_repo, get_holdings_comparison_uc, export_data_uc, weight_history_query
     )
@@ -113,9 +98,6 @@ def create_app():
     system_controller = SystemController(initialize_system_uc, update_etf_data_uc)
     config_controller = ConfigController(config_repo)
 
-    # ==========================================
-    # API 라우트 등록
-    # ==========================================
     def setup_controllers(api_bp):
         """Blueprint에 컨트롤러 주입"""
         api_bp.etf_controller = etf_controller
@@ -123,55 +105,33 @@ def create_app():
         api_bp.system_controller = system_controller
         api_bp.config_controller = config_controller
 
-    # 라우트 등록
     register_all_routes(app)
 
-    # Blueprint에 컨트롤러 주입
     for blueprint in app.blueprints.values():
         if blueprint.name == "api":
             setup_controllers(blueprint)
 
-    # ==========================================
-    # HTML 라우트
-    # ==========================================
+    # HTML Routes
     @app.route("/")
     def index():
-        """메인 페이지"""
         return render_template("index.html")
 
     @app.route("/settings")
     def settings_page():
-        """설정 페이지"""
         return render_template("settings.html")
 
-    # ✅ NEW: 캐시 관리 엔드포인트 (디버그용)
+    # Cache Management (Debug Only)
     if settings.FLASK_DEBUG:
         from infrastructure.cache import cache_manager
 
         @app.route("/api/cache/stats")
         def cache_stats():
-            """캐시 통계 조회"""
             return cache_manager.get_stats()
 
         @app.route("/api/cache/clear", methods=["POST"])
         def clear_cache():
-            """캐시 전체 삭제"""
             cache_manager.clear()
             return {"status": "success", "message": "Cache cleared"}
-
-    # ==========================================
-    # 에러 핸들러 (기본 HTTP 에러들)
-    # Note: 커스텀 예외는 ErrorHandlers에서 처리됨
-    # ==========================================
-    @app.errorhandler(404)
-    def not_found(error):
-        """404 에러 (ErrorHandlers에 의해 처리되지만 명시적 정의)"""
-        return {"status": "error", "message": "Not Found"}, 404
-
-    @app.errorhandler(500)
-    def internal_error(error):
-        """500 에러 (ErrorHandlers에 의해 처리되지만 명시적 정의)"""
-        return {"status": "error", "message": "Internal Server Error"}, 500
 
     return app
 

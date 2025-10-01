@@ -1,14 +1,15 @@
 """
-Cache Manager
+Cache Manager (완전 개선 버전)
 메모리 기반 캐싱 레이어를 제공합니다.
 ✅ Medium Priority: 성능 최적화
+✅ 배치 캐시 무효화 추가
 """
 
 import time
 from datetime import datetime
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from config.logging_config import LoggerMixin
 from config.settings import settings
@@ -141,6 +142,63 @@ class CacheManager(LoggerMixin):
             )
             return len(keys_to_delete)
 
+    def invalidate_multiple_patterns(self, patterns: List[str]) -> int:
+        """
+        여러 패턴을 한 번에 무효화합니다.
+
+        배치 처리로 성능을 개선합니다.
+
+        Args:
+            patterns: 패턴 리스트
+
+        Returns:
+            삭제된 총 항목 수
+
+        Examples:
+            >>> patterns = ['etf:holdings:123:*', 'etf:dates:123']
+            >>> cache_manager.invalidate_multiple_patterns(patterns)
+            15
+        """
+        if not self.enabled:
+            return 0
+
+        total_deleted = 0
+
+        with self._lock:
+            # 한 번의 락으로 모든 패턴 처리 (성능 개선)
+            all_keys_to_delete = set()
+
+            for pattern in patterns:
+                # 와일드카드 패턴 처리
+                if pattern.endswith("*"):
+                    prefix = pattern[:-1]
+                    matching_keys = [
+                        k for k in self._cache.keys() if k.startswith(prefix)
+                    ]
+                elif pattern.startswith("*"):
+                    suffix = pattern[1:]
+                    matching_keys = [
+                        k for k in self._cache.keys() if k.endswith(suffix)
+                    ]
+                else:
+                    matching_keys = [k for k in self._cache.keys() if pattern in k]
+
+                all_keys_to_delete.update(matching_keys)
+
+            # 중복 제거된 키들을 한 번에 삭제
+            for key in all_keys_to_delete:
+                self._delete_internal(key)
+
+            total_deleted = len(all_keys_to_delete)
+
+            if total_deleted > 0:
+                self.logger.info(
+                    f"Cache BATCH INVALIDATE: {total_deleted} items removed "
+                    f"({len(patterns)} patterns)"
+                )
+
+        return total_deleted
+
     def _is_expired(self, key: str) -> bool:
         """캐시 항목이 만료되었는지 확인합니다."""
         if key not in self._timestamps:
@@ -175,9 +233,16 @@ class CacheManager(LoggerMixin):
     def get_stats(self) -> Dict[str, Any]:
         """캐시 통계를 반환합니다."""
         with self._lock:
+            # 만료되지 않은 항목만 카운트
+            valid_items = sum(
+                1 for key in self._cache.keys() if not self._is_expired(key)
+            )
+
             return {
                 "enabled": self.enabled,
                 "total_items": len(self._cache),
+                "valid_items": valid_items,
+                "expired_items": len(self._cache) - valid_items,
                 "default_ttl": self.default_ttl,
                 "memory_usage_estimate": self._estimate_memory_usage(),
             }
@@ -199,6 +264,70 @@ class CacheManager(LoggerMixin):
                 return f"{total_size / (1024 * 1024):.2f} MB"
         except:
             return "Unknown"
+
+    def get_keys_by_pattern(self, pattern: str) -> List[str]:
+        """
+        패턴과 일치하는 모든 캐시 키를 반환합니다.
+
+        Args:
+            pattern: 키 패턴
+
+        Returns:
+            일치하는 키 리스트
+
+        Examples:
+            >>> cache_manager.get_keys_by_pattern("etf:*")
+            ['etf:123', 'etf:456', 'etf:holdings:123:2024-01-01']
+        """
+        with self._lock:
+            if pattern.endswith("*"):
+                prefix = pattern[:-1]
+                return [k for k in self._cache.keys() if k.startswith(prefix)]
+            elif pattern.startswith("*"):
+                suffix = pattern[1:]
+                return [k for k in self._cache.keys() if k.endswith(suffix)]
+            else:
+                return [k for k in self._cache.keys() if pattern in k]
+
+    def exists(self, key: str) -> bool:
+        """
+        캐시에 키가 존재하고 유효한지 확인합니다.
+
+        Args:
+            key: 캐시 키
+
+        Returns:
+            존재하고 유효하면 True
+        """
+        if not self.enabled:
+            return False
+
+        with self._lock:
+            if key not in self._cache:
+                return False
+            return not self._is_expired(key)
+
+    def get_ttl(self, key: str) -> Optional[int]:
+        """
+        캐시 항목의 남은 TTL을 초 단위로 반환합니다.
+
+        Args:
+            key: 캐시 키
+
+        Returns:
+            남은 TTL (초), 키가 없거나 만료되었으면 None
+        """
+        if not self.enabled or key not in self._timestamps:
+            return None
+
+        with self._lock:
+            if key not in self._timestamps:
+                return None
+
+            age = datetime.now() - self._timestamps[key]
+            remaining = self.default_ttl - age.total_seconds()
+
+            return int(remaining) if remaining > 0 else None
 
 
 # 전역 캐시 매니저 인스턴스
@@ -286,3 +415,21 @@ def invalidate_cache(pattern: str) -> int:
         삭제된 항목 수
     """
     return cache_manager.clear_pattern(pattern)
+
+
+def invalidate_multiple_caches(patterns: List[str]) -> int:
+    """
+    여러 패턴의 캐시를 한 번에 무효화합니다.
+
+    Args:
+        patterns: 키 패턴 리스트
+
+    Returns:
+        삭제된 총 항목 수
+
+    Examples:
+        >>> patterns = ['etf:*', 'holdings:*']
+        >>> invalidate_multiple_caches(patterns)
+        42
+    """
+    return cache_manager.invalidate_multiple_patterns(patterns)
